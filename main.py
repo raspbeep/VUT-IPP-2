@@ -164,9 +164,10 @@ class Stack:
 
 
 class Variable:
-    def __init__(self, name: str, type_v: str, value: int):
+    def __init__(self, name: str, type_v: str, initialized: bool, value: int):
         self.type_v = type_v
         self.name = name
+        self.
         self.value = value
 
 
@@ -176,7 +177,7 @@ def check_int(string: str):
     return string.isdigit()
 
 
-def get_var_from_frame(frame: list, name: str) -> bool | Variable:
+def get_var_from_frame(frame: list, name: str):
     for variable in frame:
         if variable.name == name:
             return variable
@@ -254,7 +255,7 @@ def set_value_of_var(f_and_s: dict, arg: list, new_value):
     variable.type_v = type_v
 
 
-def check_input_type(type_v: str, value: int | str) -> bool:
+def check_input_type(type_v: str, value) -> bool:
     if type_v == 'int':
         if not check_int(value):
             exit_error(56)
@@ -417,13 +418,37 @@ def execute():
                 exit_error(53)
             current_inst += 1
         elif inst[1] == 'AND':
-            pass
+            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+            if symbol1[0] == 'bool' and symbol2[0] == 'bool':
+                if symbol1[0] == 'true' and symbol2[0] == 'true':
+                    set_value_of_var(frames_and_stacks, inst[2][0], 'true')
+                else:
+                    set_value_of_var(frames_and_stacks, inst[2][0], 'false')
+            else:
+                exit_error(53)
+            current_inst += 1
         elif inst[1] == 'OR':
-            pass
+            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+            if symbol1[0] == 'bool' and symbol2[0] == 'bool':
+                if symbol1[0] == 'true' or symbol2[0] == 'true':
+                    set_value_of_var(frames_and_stacks, inst[2][0], 'true')
+                else:
+                    set_value_of_var(frames_and_stacks, inst[2][0], 'false')
+            else:
+                exit_error(53)
         elif inst[1] == 'NOT':
-            pass
+            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+            if symbol1[0] == 'bool':
+                if symbol1[0] == 'true':
+                    set_value_of_var(frames_and_stacks, inst[2][0], 'false')
+                else:
+                    set_value_of_var(frames_and_stacks, inst[2][0], 'true')
+            else:
+                exit_error(53)
         elif inst[1] == 'INT2CHAR':
-            pass
+
         elif inst[1] == 'STRI2INT':
             pass
 
