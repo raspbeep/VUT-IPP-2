@@ -19,6 +19,7 @@ err_nums = {
     -14: "Invalid input type and value.",
     31: "Invalid XML format.",
     32: "",
+    53: "Invalid comparison operands.",
     55: "Empty local frame stack before POPFRAME command.",
     56: "Empty call stack before RETURN command.",
 }
@@ -376,15 +377,45 @@ def execute():
             else:
                 print(symbol[1], end='')
         elif inst[1] == 'MUL':
-            pass
+            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+            if symbol1[0] != 'int' or symbol2[0] != 'int':
+                exit_error(56)
+            set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] * symbol2[1])
+            current_inst += 1
         elif inst[1] == 'IDIV':
-            pass
+            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+            if symbol1[0] != 'int' or symbol2[0] != 'int' or symbol2[1] == 0:
+                exit_error(56)
+            set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] // symbol2[1])
+            current_inst += 1
         elif inst[1] == 'LG':
-            pass
+            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+            if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
+                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] > symbol2[1])
+            else:
+                exit_error(53)
+            current_inst += 1
         elif inst[1] == 'GT':
-            pass
+            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+            if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
+                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] < symbol2[1])
+            else:
+                exit_error(53)
+            current_inst += 1
         elif inst[1] == 'EQ':
-            pass
+            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+            if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
+                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] == symbol2[1])
+            elif symbol1[0] == 'nil' or symbol2[0] == 'nil':
+                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] == symbol2[1])
+            else:
+                exit_error(53)
+            current_inst += 1
         elif inst[1] == 'AND':
             pass
         elif inst[1] == 'OR':
