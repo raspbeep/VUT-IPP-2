@@ -1,7 +1,6 @@
 import xml.etree.ElementTree as eT
 import sys
 import argparse
-import typing
 
 err_nums = {
     -1: "Failure exit.",
@@ -17,6 +16,7 @@ err_nums = {
     -11: "Invalid variable name.",
     -12: "Defvar, but no var was given.",
     -13: "Jump to non-existent label name.",
+    -14: "Invalid input type and value.",
     31: "Invalid XML format.",
     32: "",
     55: "Empty local frame stack before POPFRAME command.",
@@ -89,7 +89,7 @@ def parse_argument(child: eT.Element) -> list:
 
     elif child.attrib['type'] == 'int':
         # type int      <arg1 type="int">123</arg1>
-        if len(child.text) < 1 or not child.text.isdigit():
+        if len(child.text) < 1 or not check_int(child.text):
             exit_error(31)
         return [int(child.tag[-1]), child.attrib['type'], int(child.text)]
 
@@ -98,6 +98,13 @@ def parse_argument(child: eT.Element) -> list:
         if not (child.text == 'false' or child.text == 'true'):
             exit_error(31)
         return [int(child.tag[-1]), child.attrib['type'], child.text]
+
+    elif child.attrib['type'] == 'nil':
+        # type label    <arg1 type="label">label_name</arg1>
+        if len(child.text) != "nil":
+            exit_error(31)
+        return [int(child.tag[-1]), child.attrib['type'], child.text]
+
     else:
         # TODO: err number
         exit_error(32)
@@ -156,14 +163,19 @@ class Stack:
 
 
 class Variable:
-    def __init__(self, name: str, type_v: str, init: bool, value: int):
+    def __init__(self, name: str, type_v: str, value: int):
         self.type_v = type_v
         self.name = name
-        self.init = False
         self.value = value
 
 
-def get_var_from_frame(frame: list, name: str):
+def check_int(string: str):
+    if string[0] in ('-', '+'):
+        return string[1:].isdigit()
+    return string.isdigit()
+
+
+def get_var_from_frame(frame: list, name: str) -> bool | Variable:
     for variable in frame:
         if variable.name == name:
             return variable
@@ -176,7 +188,80 @@ def is_var_in_frame(frame: list, name: str):
             return True
     return False
 
-def store_symb(frame)
+
+def push_symbol_to_data_stack(f_and_s: dict, arg: list):
+    # push variable
+    frame = get_frame_abbr(arg[2])
+
+    if arg[1] == 'var':
+        name = arg[2]
+        if not is_var_in_frame(f_and_s[frame], name):
+            exit_error(-11)
+            return
+
+        variable = get_var_from_frame(f_and_s[frame], name)
+        f_and_s['DS'].push_value([variable.type_v, variable.value])
+    # push constant
+    else:
+        # [symbol_type, symbol_value]
+        f_and_s['DS'].push_value([arg[1], arg[2]])
+    return f_and_s
+
+
+def get_frame_abbr(name: str) -> str:
+    return name[:2]
+
+
+def pop_var_from_data_stack(f_and_s: dict, arg: list):
+    name = arg[2]
+    f_and_s['DS'].pop_value()
+    frame = f_and_s[get_frame_abbr(arg[2])]
+
+    if f_and_s['DS'].is_empty():
+        exit_error(56)
+        return
+    if not is_var_in_frame(frame, name):
+        exit_error(56)
+        return
+
+    variable = get_var_from_frame(frame, name)
+    # TODO: add this? variable.type_v = f_and_s['DS'].pop_value()[0]
+    variable.value = f_and_s['DS'].pop_value()[1]
+    return f_and_s
+
+
+def get_value_from_symbol(f_and_s: dict, arg: list):
+    if arg[1] == 'var':
+        frame_abbr = get_frame_abbr(arg[2])
+        if not is_var_in_frame(f_and_s[frame_abbr], arg[2][3:]):
+            exit_error(56)
+            return
+        variable = get_var_from_frame(f_and_s[frame_abbr], arg[2])
+        return [variable.type_v, variable.value]
+    return [arg[1], arg[2]]
+
+
+def set_value_of_var(f_and_s: dict, arg: list, new_value):
+    name = arg[2]
+    type_v = arg[1]
+    frame_abbr = get_frame_abbr(name)
+    if not is_var_in_frame(f_and_s[frame_abbr], name[3:]):
+        exit_error(56)
+        return
+    variable = get_var_from_frame(f_and_s[frame_abbr], name[3:])
+    variable.value = new_value
+    variable.type_v = type_v
+
+
+def check_input_type(type_v: str, value: int | str) -> bool:
+    if type_v == 'int':
+        if not check_int(value):
+            exit_error(56)
+
+    elif type_v == 'bool':
+        if value not in ['true', 'false']:
+            exit_error(56)
+    return True
 
 
 def execute():
@@ -188,6 +273,7 @@ def execute():
         'FS': Stack(),
         # call stack
         'CF': Stack(),
+        # [data_type, data_value]
         'DS': Stack(),
     }
     # dictionary storing label_name: number_of_instruction
@@ -207,7 +293,7 @@ def execute():
                 arg_frame = frames_and_stacks[inst[2][0][2][:2]]
                 var_name = inst[2][0][2][3:]
                 if not is_var_in_frame(arg_frame, var_name):
-                    arg_frame.append(Variable(var_name, '', False, 0))
+                    arg_frame.append(Variable(var_name, '', 0))
                     current_inst += 1
                 else:
                     exit_error(-11)
@@ -249,15 +335,66 @@ def execute():
             if frames_and_stacks['LF'].is_empty():
                 exit_error(55)
             frames_and_stacks['TF'] = frames_and_stacks['LF'].pop_value()[1]
+            current_inst += 1
         elif inst[1] == 'PUSHS':
-
-
+            frames_and_stacks = push_symbol_to_data_stack(frames_and_stacks, inst[2][0])
+            current_inst += 1
         elif inst[1] == 'POPS':
+            frames_and_stacks = pop_var_from_data_stack(frames_and_stacks, inst[2][0])
+            current_inst += 1
+        elif inst[1] == 'ADD':
+            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+            if symbol1[0] != 'int' or symbol2[0] != 'int':
+                exit_error(56)
+            set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] + symbol2[1])
+            current_inst += 1
+        elif inst[1] == 'SUB':
+            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+            if symbol1[0] != 'int' or symbol2[0] != 'int':
+                exit_error(56)
+            set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] - symbol2[1])
+            current_inst += 1
 
+        elif inst[1] == 'READ':
+            if args['input']:
+                with open(args['input'], 'r') as f:
+                    line = f.readline().strip('\n ')
+            else:
+                line = input().strip('\n ')
 
-
-
-
+            if not check_input_type(inst[2][1], line):
+                exit_error(-14)
+            if inst[2][1] == 'int':
+                line = int(line)
+            set_value_of_var(frames_and_stacks, inst[2][0], int(line))
+        elif inst[1] == 'WRITE':
+            symbol = get_value_from_symbol(frames_and_stacks, inst[2][0])
+            if symbol[0] == 'nil' and symbol[1] == 'nil':
+                print('', end='')
+            else:
+                print(symbol[1], end='')
+        elif inst[1] == 'MUL':
+            pass
+        elif inst[1] == 'IDIV':
+            pass
+        elif inst[1] == 'LG':
+            pass
+        elif inst[1] == 'GT':
+            pass
+        elif inst[1] == 'EQ':
+            pass
+        elif inst[1] == 'AND':
+            pass
+        elif inst[1] == 'OR':
+            pass
+        elif inst[1] == 'NOT':
+            pass
+        elif inst[1] == 'INT2CHAR':
+            pass
+        elif inst[1] == 'STRI2INT':
+            pass
 
 
 if __name__ == '__main__':
