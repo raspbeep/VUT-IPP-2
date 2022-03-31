@@ -18,10 +18,11 @@ err_nums = {
     -13: "Jump to non-existent label name.",
     -14: "Invalid input type and value.",
     31: "Invalid XML format.",
-    32: "",
-    53: "Invalid comparison operands.",
+    32: "Unexpected XML structure.",
+    53: "Invalid operands.",
     55: "Empty local frame stack before POPFRAME command.",
     56: "Empty call stack before RETURN command.",
+    57: "Runtime error. Division by zero or invalid return value of EXIT."
 }
 
 
@@ -37,6 +38,7 @@ class Stack:
 
     def push_value(self, value_type: str, value):
         self.stack.append([value_type, value])
+        self.stack_len += 1
 
     def pop_value(self):
         if self.stack_len != 0:
@@ -70,8 +72,8 @@ class Argument:
         self.assign_frame()
 
     def assign_frame(self):
-        if self.name is not None:
-            self.frame = self.name[3:]
+        if self.name is not None and self.kind == 'var':
+            self.frame = self.name[:2]
 
 
 class Variable:
@@ -110,12 +112,20 @@ class Interpreter:
 
         # stack of TODO
         self.call_stack = Stack()
+        self.frame_stack = Stack()
+
         self.local_frame = []
+        self.local_frame_valid = False
+
         self.global_frame = []
+
         self.temp_frame = []
+        self.temp_frame_valid = False
 
         self.inst_num = 0
         self.xml_root = None
+
+        self.parse_input_arguments()
 
         # reads user input or file and constructs tree
         self.parse_source()
@@ -126,13 +136,23 @@ class Interpreter:
         # parses instruction and creates instruction list with arguments
         self.parse_element_tree()
 
+        # sorts instruction list by order number of instruction
+        self.sort_instructions()
+
         self.find_labels()
 
+        self.execute_code()
+
+    def sort_instructions(self):
+        self.instructions.sort(key=lambda inst: inst.order)
+
     def find_labels(self):
-        for index, inst in self.instructions:
+        counter = 0
+        for inst in self.instructions:
             if inst.inst_opcode == 'LABEL':
                 label = inst.args[0]
-                self.labels[label.name] = index
+                self.labels[label.value] = counter
+            counter += 1
 
     def check_root(self):
         # check obligatory tag and attribute
@@ -148,7 +168,7 @@ class Interpreter:
             while (line := input()) != '':
                 lines.append(line)
         try:
-            self.xml_root = eT.ElementTree(eT.fromstringlist(lines))
+            self.xml_root = eT.ElementTree(eT.fromstringlist(lines)).getroot()
         except eT.ParseError:
             # TODO: errno?
             exit_error(-5)
@@ -169,7 +189,8 @@ class Interpreter:
             instruction = Instruction(element.attrib['opcode'], int(element.attrib['order']))
 
             for argument in element.iter():
-                self.parse_argument(instruction, argument)
+                if argument != element:
+                    self.parse_argument(instruction, argument)
             self.instructions.append(instruction)
 
     def parse_argument(self, inst: Instruction, arg: eT.Element):
@@ -183,7 +204,7 @@ class Interpreter:
             if len(arg.text) < 4 or arg.text[:3] not in ('GF@', 'LF@', 'TF@'):
                 # TODO: errno?
                 exit_error(31)
-            inst.args.append(Argument(kind='var', name=arg.text[3:]))
+            inst.args.append(Argument(kind='var', name=arg.text))
 
         elif arg.attrib['type'] == 'string':
             # type string   <arg1 type="string">hello world</arg1>
@@ -196,8 +217,7 @@ class Interpreter:
             # type int      <arg1 type="int">123</arg1>
             # check if empty and valid integer
             if not arg.text or not self.check_int(arg.text):
-                # TODO: errno?
-                exit_error(31)
+                exit_error(32)
             inst.args.append(Argument(kind='int', value=int(arg.text)))
 
         elif arg.attrib['type'] == 'bool':
@@ -208,8 +228,8 @@ class Interpreter:
             inst.args.append(Argument(kind='bool', value=arg.text))
 
         elif arg.attrib['type'] == 'nil':
-            # type label    <arg1 type="label">label_name</arg1>
-            if len(arg.text) != "nil":
+            # type label    <arg1 type="nil">nil</arg1>
+            if arg.text != "nil":
                 # TODO: errno?
                 exit_error(31)
             inst.args.append(Argument(kind='nil', value='nil'))
@@ -221,6 +241,13 @@ class Interpreter:
                 # TODO: errno?
                 exit_error(31)
             inst.args.append(Argument(kind='label', value=arg.text))
+
+        elif arg.attrib['type'] == 'type':
+            # type type    <arg1 type="type">type_name</arg1>
+            if arg.text not in ('int', 'string', 'bool'):
+                # TODO: errno?
+                exit_error(31)
+            inst.args.append(Argument(kind=arg.text))
 
         # unknown argument type
         else:
@@ -248,7 +275,7 @@ class Interpreter:
         for var in frame:
             if var.name == arg.name:
                 return var
-        # TODO: errno?
+        # TODO: errno? variable not found
         exit_error(-69)
 
     @staticmethod
@@ -296,7 +323,6 @@ class Interpreter:
                 break
 
             curr_inst: Instruction = self.instructions[self.inst_num]
-
             opcode = curr_inst.inst_opcode
 
             if opcode == 'LABEL':
@@ -305,7 +331,7 @@ class Interpreter:
                 arg = curr_inst.args[0]
                 frame = self.get_frame(arg)
                 frame.append(Variable(name=arg.name))
-
+                self.inst_num += 1
             elif opcode == 'MOVE':
                 var: Variable = self.get_var(curr_inst.args[0])
                 symbol = curr_inst.args[1]
@@ -313,231 +339,245 @@ class Interpreter:
                 var.type_v, var.value, var.initialized = type_v, value, True
                 self.inst_num += 1
             elif opcode == 'CALL':
-
+                label = curr_inst.args[0]
+                self.call_stack.push_value('int', self.inst_num + 1)
+                self.inst_num = self.labels[label.value]
             elif opcode == 'RETURN':
-                if frames_and_stacks['CF'].is_empty():
+                if self.call_stack.is_empty():
                     exit_error(56)
-                jump_to = frames_and_stacks['CF'].pop_value()
-                current_inst = jump_to[1]
+                    return
+                self.inst_num = self.call_stack.pop_value()[1]
             elif opcode == 'CREATEFRAME':
-                frames_and_stacks['TF'] = []
-                current_inst += 1
+                # TODO
+                self.inst_num += 1
             elif opcode == 'PUSHFRAME':
-                frames_and_stacks['FS'].push_value('TF', frames_and_stacks['TF'])
-                frames_and_stacks['LF'] = frames_and_stacks['TF']
-                # undefined temporary frame
-                frames_and_stacks['TF'] = []
-                current_inst += 1
-            elif inst[1] == 'POPFRAME':
-                if frames_and_stacks['LF'].is_empty():
-                    exit_error(55)
-                frames_and_stacks['TF'] = frames_and_stacks['LF'].pop_value()[1]
-                current_inst += 1
+                # TODO
+                self.inst_num += 1
+            elif opcode == 'POPFRAME':
+                # TODO
+                self.inst_num += 1
             elif opcode == 'PUSHS':
-                frames_and_stacks = push_symbol_to_data_stack(frames_and_stacks, inst[2][0])
-                current_inst += 1
+                value, type_v = self.get_value_and_type_of_symbol(curr_inst.args[0])
+                self.data_stack.push_value(type_v, value)
+                self.inst_num += 1
             elif opcode == 'POPS':
-                frames_and_stacks = pop_var_from_data_stack(frames_and_stacks, inst[2][0])
-                current_inst += 1
-            elif opcode == 'ADD':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if symbol1[0] != 'int' or symbol2[0] != 'int':
-                    exit_error(56)
-                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] + symbol2[1])
-                current_inst += 1
-            elif inst[1] == 'SUB':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if symbol1[0] != 'int' or symbol2[0] != 'int':
-                    exit_error(56)
-                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] - symbol2[1])
-                current_inst += 1
+                var: Variable = self.get_var(curr_inst.args[0])
+                var.type_v, var.value = self.data_stack.pop_value()
+                var.initialized = True
+                self.inst_num += 1
+            elif opcode in ('ADD', 'SUB', 'MUL', 'IDIV'):
+                var: Variable = self.get_var(curr_inst.args[0])
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                value2, type_v2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
+                if type_v1 != 'int' or type_v2 != 'int':
+                    exit_error(53)
+                    return
+                var.type_v = 'int'
+                var.initialized = True
+                if opcode == 'ADD':
+                    var.value = value1 + value2
+                elif opcode == 'SUB':
+                    var.value = value1 - value2
+                elif opcode == 'MUL':
+                    var.value = value1 * value2
+                elif opcode == 'IDIV':
+                    if not value2:
+                        exit_error(57)
+                    var.value = value1 // value2
+                self.inst_num += 1
+            elif opcode in ('LG', 'GT', 'EQ'):
+                var = self.get_var(curr_inst.args[0])
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                value2, type_v2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
 
-            elif inst[1] == 'READ':
-                if args['input']:
-                    with open(args['input'], 'r') as f:
-                        line = f.readline().strip('\n ')
+                if type_v1 != type_v2 or type_v1 not in ('int', 'string', 'bool', 'nil'):
+                    # TODO: errno?
+                    exit_error(69)
+                    return
+                var.type_v = bool
+                if opcode == 'LG':
+                    if type_v1 == 'nil':
+                        # TODO: errno?
+                        exit_error(69)
+                    var.value = 'true' if value1 < value2 else 'false'
+                elif opcode == 'GT':
+                    if type_v1 == 'nil':
+                        # TODO: errno?
+                        exit_error(69)
+                    var.value = 'true' if value1 > value2 else 'false'
+                elif opcode == 'EQ':
+                    var.value = 'true' if value1 == value2 else 'false'
+                self.inst_num += 1
+            elif opcode == 'READ':
+                var: Variable = self.get_var(curr_inst.args[0])
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                if self.input_file:
+                    with open(self.input_file, 'r') as f:
+                        line = f.readline().strip(' \n')
                 else:
-                    line = input().strip('\n ')
+                    line = input()
+                if type_v1 == 'int':
+                    try:
+                        var.type_v, var.value, var.initialized = 'int', int(line), True
+                    except ValueError:
+                        var.type_v, var.value, var.initialized = 'nil', 'nil', True
+                elif type_v1 == 'bool':
+                    var.type_v, var.value, var.initialized = 'bool', 'true' if line == 'true' else 'false', True
+                elif type_v1 == 'string':
+                    var.type_v, var.value, var.initialized = 'string', line, True
 
-                if not check_input_type(inst[2][1], line):
-                    exit_error(-14)
-                if inst[2][1] == 'int':
-                    line = int(line)
-                set_value_of_var(frames_and_stacks, inst[2][0], int(line))
-            elif inst[1] == 'WRITE':
-                symbol = get_value_from_symbol(frames_and_stacks, inst[2][0])
-                if symbol[0] == 'nil' and symbol[1] == 'nil':
+                self.inst_num += 1
+            elif opcode == 'WRITE':
+                value, type_v = self.get_value_and_type_of_symbol(curr_inst.args[0])
+                if type_v == 'nil':
                     print('', end='')
                 else:
-                    print(symbol[1], end='')
-            elif inst[1] == 'MUL':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if symbol1[0] != 'int' or symbol2[0] != 'int':
-                    exit_error(56)
-                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] * symbol2[1])
-                current_inst += 1
-            elif inst[1] == 'IDIV':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if symbol1[0] != 'int' or symbol2[0] != 'int' or symbol2[1] == 0:
-                    exit_error(56)
-                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] // symbol2[1])
-                current_inst += 1
-            elif inst[1] == 'LG':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
-                    set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] > symbol2[1])
-                else:
-                    exit_error(53)
-                current_inst += 1
-            elif inst[1] == 'GT':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
-                    set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] < symbol2[1])
-                else:
-                    exit_error(53)
-                current_inst += 1
-            elif inst[1] == 'EQ':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
-                    set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] == symbol2[1])
-                elif symbol1[0] == 'nil' or symbol2[0] == 'nil':
-                    set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] == symbol2[1])
-                else:
-                    exit_error(53)
-                current_inst += 1
-            elif inst[1] == 'AND':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if symbol1[0] == 'bool' and symbol2[0] == 'bool':
-                    if symbol1[0] == 'true' and symbol2[0] == 'true':
-                        set_value_of_var(frames_and_stacks, inst[2][0], 'true')
-                    else:
-                        set_value_of_var(frames_and_stacks, inst[2][0], 'false')
-                else:
-                    exit_error(53)
-                current_inst += 1
-            elif inst[1] == 'OR':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if symbol1[0] == 'bool' and symbol2[0] == 'bool':
-                    if symbol1[0] == 'true' or symbol2[0] == 'true':
-                        set_value_of_var(frames_and_stacks, inst[2][0], 'true')
-                    else:
-                        set_value_of_var(frames_and_stacks, inst[2][0], 'false')
-                else:
-                    exit_error(53)
-            elif inst[1] == 'NOT':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                if symbol1[0] == 'bool':
-                    if symbol1[0] == 'true':
-                        set_value_of_var(frames_and_stacks, inst[2][0], 'false')
-                    else:
-                        set_value_of_var(frames_and_stacks, inst[2][0], 'true')
-                else:
-                    exit_error(53)
-            elif inst[1] == 'INT2CHAR':
-                symbol = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                if symbol[0] != 'int':
+                    print(value, end='')
+                self.inst_num += 1
+            elif opcode == 'AND':
+                var: Variable = self.get_var(curr_inst.args[0])
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                value2, type_v2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
+
+                if type_v1 != type_v2 or type_v1 != 'bool':
                     # TODO: errno?
-                    exit_error(58)
-                    return
+                    exit_error(69)
+                var.type_v = 'bool'
+                var.initialized = True
+                var.value = 'true' if value1 == 'true' and value2 == 'true' else 'false'
+                self.inst_num += 1
+            elif opcode == 'OR':
+                var: Variable = self.get_var(curr_inst.args[0])
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                value2, type_v2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
+
+                if type_v1 != 'bool' or type_v2 != 'bool':
+                    # TODO: errno?
+                    exit_error(69)
+                var.type_v = 'bool'
+                var.initialized = True
+                var.value = 'true' if value1 == 'true' or value2 == 'true' else 'false'
+                self.inst_num += 1
+            elif opcode == 'NOT':
+                var: Variable = self.get_var(curr_inst.args[0])
+                value, type_v = self.get_value_and_type_of_symbol(curr_inst.args[1])
+
+                if type_v != 'bool':
+                    # TODO: errno?
+                    exit_error(69)
+                var.type_v = 'bool'
+                var.initialized = True
+                var.value = 'true' if value == 'false' else 'false'
+                self.inst_num += 1
+            elif opcode == 'INT2CHAR':
+                var: Variable = self.get_var(curr_inst.args[0])
+                value, type_v = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                if type_v != 'int':
+                    # TODO: errno?
+                    exit_error(69)
                 try:
-                    char = chr(symbol[1])
+                    char = chr(value)
                 except ValueError:
                     exit_error(58)
                     return
-                set_value_of_var(frames_and_stacks, inst[1], char)
-                current_inst += 1
-            elif inst[1] == 'STRI2INT':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if symbol1[0] != 'str' or symbol2[0] != 'int':
+                var.type_v, var.value, var.initialized = 'string', char, True
+                self.inst_num += 1
+            elif opcode == 'STRI2INT':
+                var: Variable = self.get_var(curr_inst.args[0])
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                value2, type_v2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
+                if type_v1 != 'string' or type_v2 != 'int':
                     # TODO: errno?
-                    exit_error(58)
-                # -1 due to indexation
-                if len(symbol1[1]) - 1 < symbol2[1]:
+                    exit_error(69)
+                if value2 > len(value1) - 1:
                     exit_error(58)
                 try:
-                    char_to_convert = ord(symbol1[1][symbol2[1]])
+                    new_value = ord(value1[value2])
                 except ValueError:
-                    exit_error(58)
+                    # TODO: errno?
+                    exit_error(69)
                     return
-                var_name = inst[2][0][1][3:]
-                set_value_of_var(frames_and_stacks, var_name, char_to_convert)
-                current_inst += 1
-            elif inst[1] == 'CONCAT':
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-                if symbol1[0] != 'str' or symbol2[0] != 'str':
-                    exit_error(58)
+                var.type_v, var.value, var.initialized = 'int', new_value, True
+                self.inst_num += 1
+            elif opcode == 'CONCAT':
+                var: Variable = self.get_var(curr_inst.args[0])
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                value2, type_v2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
+                if type_v1 != 'string' or type_v2 != 'string':
+                    # TODO: errno?
+                    exit_error(69)
                     return
-                concat_string = symbol1[1] + symbol2[1]
-                set_value_of_var(frames_and_stacks, inst[2][0], concat_string)
-                current_inst += 1
-            elif inst[1] == 'STRLEN':
-                symbol = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                if symbol[0] != 'str':
-                    exit_error(58)
+                var.type_v, var.value, var.initialized = 'string', value1 + value2, True
+                self.inst_num += 1
+            elif opcode == 'STRLEN':
+                var: Variable = self.get_var(curr_inst.args[0])
+                value, type_v = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                if type_v != 'string':
+                    # TODO: errno?
+                    exit_error(69)
                     return
-                variable = get_var_from_frame(frames_and_stacks[get_frame_abbr(inst[2][0])], inst[2][0][1][3:])
-                variable.type_v = 'int'
-                variable.value = len(symbol[1])
-                variable.is_initialized = True
-                set_value_of_var(frames_and_stacks, inst[2][0], len(symbol[1]))
-                current_inst += 1
-            elif inst[1] == 'GETCHAR':
-                variable = get_var_from_frame(frames_and_stacks[get_frame_abbr(inst[2][0])], inst[2][0][1][3:])
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-
-                if symbol1[0] != 'str' or symbol2[0] != 'int':
+                var.type_v, var.value, var.initialized = 'int', len(value), True
+                self.inst_num += 1
+            elif opcode == 'GETCHAR':
+                var: Variable = self.get_var(curr_inst.args[0])
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                value2, type_v2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
+                if type_v1 != 'string' or type_v2 != 'int':
+                    # TODO: errno?
+                    exit_error(69)
+                    return
+                if value2 > len(value1) - 1:
                     exit_error(58)
+                var.type_v, var.value, var.initialized = 'string', value1[value2], True
+                self.inst_num += 1
+            elif opcode == 'SETCHAR':
+                var: Variable = self.get_var(curr_inst.args[0])
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                value2, type_v2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
+                if var.type_v != 'string' or type_v1 != 'int' or type_v2 != 'string':
+                    # TODO: errno?
+                    exit_error(69)
+                    return
+                if value1 > len(var.value) - 1 or not value2:
+                    exit_error(58)
+                new_var_val = list(var.value)
+                new_var_val[value1] = value2[0]
+                new_var_val = ''.join(new_var_val)
+                var.type_v, var.value, var.initialized = 'string', new_var_val, True
+                self.inst_num += 1
+            elif opcode == 'DPRINT':
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                print(value1)
+                self.inst_num += 1
+            elif opcode == 'BREAK':
+                print('Printing some useful information about my current state.')
+                self.inst_num += 1
+            elif opcode == 'JUMP':
+                label = curr_inst.args[0]
+                if not self.labels[label.value]:
+                    exit_error(69)
+                    return
+                self.inst_num = self.labels[label.value]
+            elif opcode in ('JUMPIFEQ', 'JUMPIFNEQ'):
+                label = curr_inst.args[0]
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                value2, type_v2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
+                if not self.labels[label.value]:
+                    exit_error(69)
                     return
 
-                if symbol2[1] > len(symbol1[1]) - 1:
-                    exit_error(58)
-                    return
-                variable.type_v = 'str'
-                variable.initialized = True
-                variable.value = symbol1[1][symbol2[1]]
-            elif inst[1] == 'SETCHAR':
-                variable = get_var_from_frame(frames_and_stacks[get_frame_abbr(inst[2][0])], inst[2][0][1][3:])
-                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-
-                if symbol1[0] != 'str' or symbol2[0] != 'int':
-                    exit_error(58)
-                    return
-
-                if symbol2[1] > len(symbol1[1]) - 1:
-                    exit_error(58)
-                    return
-                variable.type_v = 'str'
-                variable.initialized = True
-                variable.value = symbol1[1][symbol2[1]]
+                if type_v1 == 'nil' or type_v2 == 'nil':
+                    self.inst_num = self.labels[label.value]
+                if type_v1 != type_v2:
+                    exit_error(53)
+                if opcode == 'JUMPIFEQ':
+                    if value1 == value2:
+                        self.inst_num = self.labels[label.value]
+                elif opcode == 'JUMPIFNEQ':
+                    if value1 != value2:
+                        self.inst_num = self.labels[label.value]
+            else:
+                self.inst_num += 1
 
 
-
-def check_input_type(type_v: str, value) -> bool:
-    if type_v == 'int':
-        if not check_int(value):
-            exit_error(56)
-
-    elif type_v == 'bool':
-        if value not in ['true', 'false']:
-            exit_error(56)
-    return True
-
-
-
-if __name__ == '__main__':
-    xml_tree: eT.ElementTree = parse_source()
-
-    execute()
+interpret = Interpreter()
