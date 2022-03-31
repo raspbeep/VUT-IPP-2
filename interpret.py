@@ -19,6 +19,7 @@ err_nums = {
     -14: "Invalid input type and value.",
     31: "Invalid XML format.",
     32: "Unexpected XML structure.",
+    52: "Undefined label, or redefinition.",
     53: "Invalid operands.",
     55: "Empty local frame stack before POPFRAME command.",
     56: "Empty call stack before RETURN command.",
@@ -151,6 +152,8 @@ class Interpreter:
         for inst in self.instructions:
             if inst.inst_opcode == 'LABEL':
                 label = inst.args[0]
+                if label.value in self.labels:
+                    exit_error(52)
                 self.labels[label.value] = counter
             counter += 1
 
@@ -281,7 +284,7 @@ class Interpreter:
     @staticmethod
     def print_help():
         print("""   Usage:
-            main.py [--help] [--input <input_file>] [--source <source_file>]
+            interpret.py [--help] [--input <input_file>] [--source <source_file>]
             some more helpful message
             """)
 
@@ -573,9 +576,13 @@ class Interpreter:
                 if opcode == 'JUMPIFEQ':
                     if value1 == value2:
                         self.inst_num = self.labels[label.value]
+                    else:
+                        self.inst_num += 1
                 elif opcode == 'JUMPIFNEQ':
                     if value1 != value2:
                         self.inst_num = self.labels[label.value]
+                    else:
+                        self.inst_num += 1
             else:
                 # unknown instruction
                 exit_error(32)
