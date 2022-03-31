@@ -30,116 +30,6 @@ def exit_error(err_number):
     sys.exit(err_number)
 
 
-def print_help():
-    print("""   Usage:
-        main.py [--help] [--input <input_file>] [--source <source_file>]
-        some more helpful message
-        """)
-
-
-def parse_arguments() -> dict:
-    parser = argparse.ArgumentParser(description='Helping you', add_help=False)
-    parser.add_argument('--help', dest='help', action='store_true', default=False,
-                        help='show this message')
-    parser.add_argument('--input', type=str, dest='input_file', default=False, required=False)
-    parser.add_argument('--source', type=str, dest='source_file', default=False, required=False)
-    arguments = vars(parser.parse_args())
-    if arguments['help'] and not arguments['input_file'] and not arguments['source_file']:
-        print_help()
-        sys.exit(0)
-    elif arguments['help'] and (arguments['input_file'] or arguments['source_file']):
-        exit_error(-4)
-    elif not (arguments['input_file'] or arguments['source_file']):
-        exit_error(-3)
-
-    return arguments
-
-
-def parse_source() -> eT.ElementTree:
-    if args['source_file']:
-        with open(args['source_file'], 'r') as f:
-            lines = f.readlines()
-    else:
-        lines = []
-        while (line := input()) != '':
-            lines.append(line)
-    try:
-        return eT.ElementTree(eT.fromstringlist(lines))
-    except eT.ParseError:
-        exit_error(-5)
-
-
-def parse_argument(child: eT.Element) -> list:
-    if not (child.tag == 'arg1' or child.tag == 'arg2' or child.tag == 'arg3'):
-        exit_error(31)
-
-    if child.attrib['type'] == 'var':
-        # type var      <arg1 type="var">GF@var</arg1>
-        # GF@x | LF@x | TF@x
-        if len(child.text) < 4:
-            exit_error(31)
-        if not (child.text[:3] == 'GF@' or child.text[:3] == 'LF@' or child.text[:3] == 'TF@'):
-            exit_error(31)
-        return [int(child.tag[-1]), child.attrib['type'], child.text]
-
-    elif child.attrib['type'] == 'string':
-        # type string   <arg1 type="string">hello world</arg1>
-        if len(child.text) < 1:
-            exit_error(31)
-        return [int(child.tag[-1]), child.attrib['type'], child.text]
-
-    elif child.attrib['type'] == 'int':
-        # type int      <arg1 type="int">123</arg1>
-        if len(child.text) < 1 or not check_int(child.text):
-            exit_error(31)
-        return [int(child.tag[-1]), child.attrib['type'], int(child.text)]
-
-    elif child.attrib['type'] == 'bool':
-        # type bool     <arg1 type="bool">true</arg1>
-        if not (child.text == 'false' or child.text == 'true'):
-            exit_error(31)
-        return [int(child.tag[-1]), child.attrib['type'], child.text]
-
-    elif child.attrib['type'] == 'nil':
-        # type label    <arg1 type="label">label_name</arg1>
-        if len(child.text) != "nil":
-            exit_error(31)
-        return [int(child.tag[-1]), child.attrib['type'], child.text]
-
-    else:
-        # TODO: err number
-        exit_error(32)
-
-
-def parse_element_tree() -> list:
-    order_nums = []
-    label_names = []
-    inst_list = []
-    root = xml_tree.getroot()
-
-    # check obligatory tag and attribute
-    if root.tag != 'program' or root.attrib['language'] != 'IPPcode22':
-        exit_error(31)
-
-    for element in root:
-        if "order" not in element.attrib or "opcode" not in element.attrib:
-            exit_error(31)
-        # checking if there is a recurrence of order numbers
-        if int(element.attrib['order']) in order_nums:
-            exit_error(-6)
-        order_nums.append(int(element.attrib['order']))
-        if element.attrib['opcode'] == 'LABEL':
-            if element.attrib['opcode'] in label_names:
-                exit_error(-7)
-            label_names.append(element.attrib['opcode'])
-
-        children_list = []
-        [children_list.append(parse_argument(child)) for child in element.iter() if child is not element]
-        children_list.sort(key=lambda x: x[0])
-        inst_list.append([int(element.attrib['order']), element.attrib['opcode'], children_list])
-    return inst_list
-
-
 class Stack:
     def __init__(self):
         self.stack = []
@@ -163,96 +53,476 @@ class Stack:
         return not self.stack_len
 
 
+class Instruction:
+    def __init__(self, inst_opcode, order):
+        self.inst_opcode = inst_opcode
+        self.order = order
+        self.args = []
+
+
+class Argument:
+    def __init__(self, kind, value=None, name=None):
+        # var | int | string | bool | label
+        self.kind = kind
+        self.value = value
+        self.name = name
+        self.frame = None
+        self.assign_frame()
+
+    def assign_frame(self):
+        if self.name is not None:
+            self.frame = self.name[3:]
+
+
 class Variable:
-    def __init__(self, name: str, type_v: str, initialized: bool, value: int):
+    def __init__(self, name=None, type_v=None, initialized=False, value=None):
         self.type_v = type_v
         self.name = name
-        self.
+        self.initialized = initialized
         self.value = value
 
 
-def check_int(string: str):
-    if string[0] in ('-', '+'):
-        return string[1:].isdigit()
-    return string.isdigit()
+class Interpreter:
+    group_var_symbol = ('MOVE', 'INT2CHAR', 'TYPE', 'STRLEN', 'NOT')
+    group_var_type = ['READ']
+    group_var_symbol_symbol = ('ADD', 'SUB', 'MUL', 'IDIV', 'LT', 'GT', 'EQ', 'AND', 'OR', 'STR2INT', 'CONCAT','GETCHAR', 'SETCHAR')
+    group_symbol = ('PUSHS', 'EXIT', 'DPRINT', 'WRITE')
+    group_var = ('POPS', 'DEFVAR')
+    group_no_args = ('BREAK', 'RETURN', 'CREATEFRAME', 'PUSHFRAME', 'POPFRAME')
+    group_label = ('LABEL', 'CALL', 'JUMP')
 
+    label_list = []
+    order_numbers = []
 
-def get_var_from_frame(frame: list, name: str):
-    for variable in frame:
-        if variable.name == name:
-            return variable
-    return False
+    def __init__(self):
+        self.instructions = []
 
+        self.source_file = None
+        self.source_is_file = False
+        self.input_file = None
+        self.input_is_file = False
 
-def is_var_in_frame(frame: list, name: str):
-    for variable in frame:
-        if variable.name == name:
-            return True
-    return False
+        # {label_name: index_of_instruction, ...}
+        self.labels = {}
 
+        # stack of values
+        self.data_stack = Stack()
 
-def push_symbol_to_data_stack(f_and_s: dict, arg: list):
-    # push variable
-    frame = get_frame_abbr(arg[2])
+        # stack of TODO
+        self.call_stack = Stack()
+        self.local_frame = []
+        self.global_frame = []
+        self.temp_frame = []
 
-    if arg[1] == 'var':
-        name = arg[2]
-        if not is_var_in_frame(f_and_s[frame], name):
-            exit_error(-11)
-            return
+        self.inst_num = 0
+        self.xml_root = None
 
-        variable = get_var_from_frame(f_and_s[frame], name)
-        f_and_s['DS'].push_value([variable.type_v, variable.value])
-    # push constant
-    else:
-        # [symbol_type, symbol_value]
-        f_and_s['DS'].push_value([arg[1], arg[2]])
-    return f_and_s
+        # reads user input or file and constructs tree
+        self.parse_source()
 
+        # checks if root has correct tag and name
+        self.check_root()
 
-def get_frame_abbr(name: str) -> str:
-    return name[:2]
+        # parses instruction and creates instruction list with arguments
+        self.parse_element_tree()
 
+        self.find_labels()
 
-def pop_var_from_data_stack(f_and_s: dict, arg: list):
-    name = arg[2]
-    f_and_s['DS'].pop_value()
-    frame = f_and_s[get_frame_abbr(arg[2])]
+    def find_labels(self):
+        for index, inst in self.instructions:
+            if inst.inst_opcode == 'LABEL':
+                label = inst.args[0]
+                self.labels[label.name] = index
 
-    if f_and_s['DS'].is_empty():
-        exit_error(56)
-        return
-    if not is_var_in_frame(frame, name):
-        exit_error(56)
-        return
+    def check_root(self):
+        # check obligatory tag and attribute
+        if self.xml_root.tag != 'program' or self.xml_root.attrib['language'] != 'IPPcode22':
+            exit_error(31)
 
-    variable = get_var_from_frame(frame, name)
-    # TODO: add this? variable.type_v = f_and_s['DS'].pop_value()[0]
-    variable.value = f_and_s['DS'].pop_value()[1]
-    return f_and_s
+    def parse_source(self):
+        if self.source_is_file:
+            with open(self.source_file, 'r') as f:
+                lines = f.readlines()
+        else:
+            lines = []
+            while (line := input()) != '':
+                lines.append(line)
+        try:
+            self.xml_root = eT.ElementTree(eT.fromstringlist(lines))
+        except eT.ParseError:
+            # TODO: errno?
+            exit_error(-5)
 
+    def parse_element_tree(self):
+        for element in self.xml_root:
+            if "order" not in element.attrib or "opcode" not in element.attrib:
+                # TODO: errno?
+                exit_error(31)
 
-def get_value_from_symbol(f_and_s: dict, arg: list):
-    if arg[1] == 'var':
-        frame_abbr = get_frame_abbr(arg[2])
-        if not is_var_in_frame(f_and_s[frame_abbr], arg[2][3:]):
-            exit_error(56)
-            return
-        variable = get_var_from_frame(f_and_s[frame_abbr], arg[2])
-        return [variable.type_v, variable.value]
-    return [arg[1], arg[2]]
+            # checking if there is a recurrence of order numbers
+            if int(element.attrib['order']) in self.order_numbers:
+                # TODO: errno?
+                exit_error(-6)
 
+            self.order_numbers.append(int(element.attrib['order']))
 
-def set_value_of_var(f_and_s: dict, arg: list, new_value):
-    name = arg[2]
-    type_v = arg[1]
-    frame_abbr = get_frame_abbr(name)
-    if not is_var_in_frame(f_and_s[frame_abbr], name[3:]):
-        exit_error(56)
-        return
-    variable = get_var_from_frame(f_and_s[frame_abbr], name[3:])
-    variable.value = new_value
-    variable.type_v = type_v
+            instruction = Instruction(element.attrib['opcode'], int(element.attrib['order']))
+
+            for argument in element.iter():
+                self.parse_argument(instruction, argument)
+            self.instructions.append(instruction)
+
+    def parse_argument(self, inst: Instruction, arg: eT.Element):
+        if arg.tag not in ('arg1', 'arg2', 'arg3'):
+            # TODO: errno?
+            exit_error(31)
+
+        if arg.attrib['type'] == 'var':
+            # type var      <arg1 type="var">GF@var</arg1>
+            # GF@x | LF@x | TF@x
+            if len(arg.text) < 4 or arg.text[:3] not in ('GF@', 'LF@', 'TF@'):
+                # TODO: errno?
+                exit_error(31)
+            inst.args.append(Argument(kind='var', name=arg.text[3:]))
+
+        elif arg.attrib['type'] == 'string':
+            # type string   <arg1 type="string">hello world</arg1>
+            if not arg.text:
+                # TODO: errno?
+                exit_error(31)
+            inst.args.append(Argument(kind='string', value=arg.text))
+
+        elif arg.attrib['type'] == 'int':
+            # type int      <arg1 type="int">123</arg1>
+            # check if empty and valid integer
+            if not arg.text or not self.check_int(arg.text):
+                # TODO: errno?
+                exit_error(31)
+            inst.args.append(Argument(kind='int', value=int(arg.text)))
+
+        elif arg.attrib['type'] == 'bool':
+            # type bool     <arg1 type="bool">true</arg1>
+            if arg.text not in ('false', 'true'):
+                # TODO: errno?
+                exit_error(31)
+            inst.args.append(Argument(kind='bool', value=arg.text))
+
+        elif arg.attrib['type'] == 'nil':
+            # type label    <arg1 type="label">label_name</arg1>
+            if len(arg.text) != "nil":
+                # TODO: errno?
+                exit_error(31)
+            inst.args.append(Argument(kind='nil', value='nil'))
+
+        elif arg.attrib['type'] == 'label':
+            # type label    <arg1 type="label">label_name</arg1>
+            # empty label name
+            if not arg.text:
+                # TODO: errno?
+                exit_error(31)
+            inst.args.append(Argument(kind='label', value=arg.text))
+
+        # unknown argument type
+        else:
+            # TODO: err number
+            exit_error(32)
+
+    def get_frame(self, arg: Argument):
+        if arg.frame == 'LF':
+            return self.local_frame
+        if arg.frame == 'GF':
+            return self.global_frame
+        if arg.frame == 'TF':
+            return self.temp_frame
+
+    def get_value_and_type_of_symbol(self, arg: Argument):
+        if arg.kind == 'var':
+            var = self.get_var(arg)
+            return var.value, var.type_v
+
+        elif arg.kind in ('string', 'int', 'bool', 'nil'):
+            return arg.value, arg.kind
+
+    def get_var(self, arg):
+        frame = self.get_frame(arg)
+        for var in frame:
+            if var.name == arg.name:
+                return var
+        # TODO: errno?
+        exit_error(-69)
+
+    @staticmethod
+    def print_help():
+        print("""   Usage:
+            main.py [--help] [--input <input_file>] [--source <source_file>]
+            some more helpful message
+            """)
+
+    @staticmethod
+    def check_int(string: str):
+        if string[0] in ('-', '+'):
+            return string[1:].isdigit()
+        return string.isdigit()
+
+    def parse_input_arguments(self):
+        parser = argparse.ArgumentParser(description='Helping you', add_help=False)
+        parser.add_argument('--help', dest='help', action='store_true', default=False,
+                            help='show this message')
+        parser.add_argument('--input', type=str, dest='input_file', default=False, required=False)
+        parser.add_argument('--source', type=str, dest='source_file', default=False, required=False)
+        arguments = vars(parser.parse_args())
+
+        # argument checks
+        if arguments['help'] and not arguments['input_file'] and not arguments['source_file']:
+            self.print_help()
+            sys.exit(0)
+        elif arguments['help'] and (arguments['input_file'] or arguments['source_file']):
+            exit_error(-4)
+        elif not (arguments['input_file'] or arguments['source_file']):
+            exit_error(-3)
+
+        if arguments['input_file']:
+            self.input_is_file = True
+            self.input_file = arguments['input_file']
+
+        if arguments['source_file']:
+            self.source_is_file = True
+            self.source_file = arguments['source_file']
+
+    def execute_code(self):
+        while True:
+            # check if we already executed the last instruction
+            if self.inst_num > len(self.instructions) - 1:
+                break
+
+            curr_inst: Instruction = self.instructions[self.inst_num]
+
+            opcode = curr_inst.inst_opcode
+
+            if opcode == 'LABEL':
+                self.inst_num += 1
+            elif opcode == 'DEFVAR':
+                arg = curr_inst.args[0]
+                frame = self.get_frame(arg)
+                frame.append(Variable(name=arg.name))
+
+            elif opcode == 'MOVE':
+                var: Variable = self.get_var(curr_inst.args[0])
+                symbol = curr_inst.args[1]
+                value, type_v = self.get_value_and_type_of_symbol(symbol)
+                var.type_v, var.value, var.initialized = type_v, value, True
+                self.inst_num += 1
+            elif opcode == 'CALL':
+
+            elif opcode == 'RETURN':
+                if frames_and_stacks['CF'].is_empty():
+                    exit_error(56)
+                jump_to = frames_and_stacks['CF'].pop_value()
+                current_inst = jump_to[1]
+            elif opcode == 'CREATEFRAME':
+                frames_and_stacks['TF'] = []
+                current_inst += 1
+            elif opcode == 'PUSHFRAME':
+                frames_and_stacks['FS'].push_value('TF', frames_and_stacks['TF'])
+                frames_and_stacks['LF'] = frames_and_stacks['TF']
+                # undefined temporary frame
+                frames_and_stacks['TF'] = []
+                current_inst += 1
+            elif inst[1] == 'POPFRAME':
+                if frames_and_stacks['LF'].is_empty():
+                    exit_error(55)
+                frames_and_stacks['TF'] = frames_and_stacks['LF'].pop_value()[1]
+                current_inst += 1
+            elif opcode == 'PUSHS':
+                frames_and_stacks = push_symbol_to_data_stack(frames_and_stacks, inst[2][0])
+                current_inst += 1
+            elif opcode == 'POPS':
+                frames_and_stacks = pop_var_from_data_stack(frames_and_stacks, inst[2][0])
+                current_inst += 1
+            elif opcode == 'ADD':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if symbol1[0] != 'int' or symbol2[0] != 'int':
+                    exit_error(56)
+                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] + symbol2[1])
+                current_inst += 1
+            elif inst[1] == 'SUB':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if symbol1[0] != 'int' or symbol2[0] != 'int':
+                    exit_error(56)
+                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] - symbol2[1])
+                current_inst += 1
+
+            elif inst[1] == 'READ':
+                if args['input']:
+                    with open(args['input'], 'r') as f:
+                        line = f.readline().strip('\n ')
+                else:
+                    line = input().strip('\n ')
+
+                if not check_input_type(inst[2][1], line):
+                    exit_error(-14)
+                if inst[2][1] == 'int':
+                    line = int(line)
+                set_value_of_var(frames_and_stacks, inst[2][0], int(line))
+            elif inst[1] == 'WRITE':
+                symbol = get_value_from_symbol(frames_and_stacks, inst[2][0])
+                if symbol[0] == 'nil' and symbol[1] == 'nil':
+                    print('', end='')
+                else:
+                    print(symbol[1], end='')
+            elif inst[1] == 'MUL':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if symbol1[0] != 'int' or symbol2[0] != 'int':
+                    exit_error(56)
+                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] * symbol2[1])
+                current_inst += 1
+            elif inst[1] == 'IDIV':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if symbol1[0] != 'int' or symbol2[0] != 'int' or symbol2[1] == 0:
+                    exit_error(56)
+                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] // symbol2[1])
+                current_inst += 1
+            elif inst[1] == 'LG':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
+                    set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] > symbol2[1])
+                else:
+                    exit_error(53)
+                current_inst += 1
+            elif inst[1] == 'GT':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
+                    set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] < symbol2[1])
+                else:
+                    exit_error(53)
+                current_inst += 1
+            elif inst[1] == 'EQ':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
+                    set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] == symbol2[1])
+                elif symbol1[0] == 'nil' or symbol2[0] == 'nil':
+                    set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] == symbol2[1])
+                else:
+                    exit_error(53)
+                current_inst += 1
+            elif inst[1] == 'AND':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if symbol1[0] == 'bool' and symbol2[0] == 'bool':
+                    if symbol1[0] == 'true' and symbol2[0] == 'true':
+                        set_value_of_var(frames_and_stacks, inst[2][0], 'true')
+                    else:
+                        set_value_of_var(frames_and_stacks, inst[2][0], 'false')
+                else:
+                    exit_error(53)
+                current_inst += 1
+            elif inst[1] == 'OR':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if symbol1[0] == 'bool' and symbol2[0] == 'bool':
+                    if symbol1[0] == 'true' or symbol2[0] == 'true':
+                        set_value_of_var(frames_and_stacks, inst[2][0], 'true')
+                    else:
+                        set_value_of_var(frames_and_stacks, inst[2][0], 'false')
+                else:
+                    exit_error(53)
+            elif inst[1] == 'NOT':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                if symbol1[0] == 'bool':
+                    if symbol1[0] == 'true':
+                        set_value_of_var(frames_and_stacks, inst[2][0], 'false')
+                    else:
+                        set_value_of_var(frames_and_stacks, inst[2][0], 'true')
+                else:
+                    exit_error(53)
+            elif inst[1] == 'INT2CHAR':
+                symbol = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                if symbol[0] != 'int':
+                    # TODO: errno?
+                    exit_error(58)
+                    return
+                try:
+                    char = chr(symbol[1])
+                except ValueError:
+                    exit_error(58)
+                    return
+                set_value_of_var(frames_and_stacks, inst[1], char)
+                current_inst += 1
+            elif inst[1] == 'STRI2INT':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if symbol1[0] != 'str' or symbol2[0] != 'int':
+                    # TODO: errno?
+                    exit_error(58)
+                # -1 due to indexation
+                if len(symbol1[1]) - 1 < symbol2[1]:
+                    exit_error(58)
+                try:
+                    char_to_convert = ord(symbol1[1][symbol2[1]])
+                except ValueError:
+                    exit_error(58)
+                    return
+                var_name = inst[2][0][1][3:]
+                set_value_of_var(frames_and_stacks, var_name, char_to_convert)
+                current_inst += 1
+            elif inst[1] == 'CONCAT':
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+                if symbol1[0] != 'str' or symbol2[0] != 'str':
+                    exit_error(58)
+                    return
+                concat_string = symbol1[1] + symbol2[1]
+                set_value_of_var(frames_and_stacks, inst[2][0], concat_string)
+                current_inst += 1
+            elif inst[1] == 'STRLEN':
+                symbol = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                if symbol[0] != 'str':
+                    exit_error(58)
+                    return
+                variable = get_var_from_frame(frames_and_stacks[get_frame_abbr(inst[2][0])], inst[2][0][1][3:])
+                variable.type_v = 'int'
+                variable.value = len(symbol[1])
+                variable.is_initialized = True
+                set_value_of_var(frames_and_stacks, inst[2][0], len(symbol[1]))
+                current_inst += 1
+            elif inst[1] == 'GETCHAR':
+                variable = get_var_from_frame(frames_and_stacks[get_frame_abbr(inst[2][0])], inst[2][0][1][3:])
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+
+                if symbol1[0] != 'str' or symbol2[0] != 'int':
+                    exit_error(58)
+                    return
+
+                if symbol2[1] > len(symbol1[1]) - 1:
+                    exit_error(58)
+                    return
+                variable.type_v = 'str'
+                variable.initialized = True
+                variable.value = symbol1[1][symbol2[1]]
+            elif inst[1] == 'SETCHAR':
+                variable = get_var_from_frame(frames_and_stacks[get_frame_abbr(inst[2][0])], inst[2][0][1][3:])
+                symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
+                symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
+
+                if symbol1[0] != 'str' or symbol2[0] != 'int':
+                    exit_error(58)
+                    return
+
+                if symbol2[1] > len(symbol1[1]) - 1:
+                    exit_error(58)
+                    return
+                variable.type_v = 'str'
+                variable.initialized = True
+                variable.value = symbol1[1][symbol2[1]]
+
 
 
 def check_input_type(type_v: str, value) -> bool:
@@ -266,197 +536,8 @@ def check_input_type(type_v: str, value) -> bool:
     return True
 
 
-def execute():
-    frames_and_stacks = {
-        'GF': [],
-        'LF': Stack(),
-        'TF': [],
-        # frame stack
-        'FS': Stack(),
-        # call stack
-        'CF': Stack(),
-        # [data_type, data_value]
-        'DS': Stack(),
-    }
-    # dictionary storing label_name: number_of_instruction
-    label_dict = {}
-
-    current_inst = 0
-
-    while True:
-        if current_inst > len(instruction_list) - 1:
-            break
-        inst = instruction_list[current_inst]
-        if inst[1] == 'LABEL':
-            label_dict[inst[2]] = current_inst
-            current_inst += 1
-        elif inst[1] == 'DEFVAR':
-            if inst[2][0][1] == 'var':
-                arg_frame = frames_and_stacks[inst[2][0][2][:2]]
-                var_name = inst[2][0][2][3:]
-                if not is_var_in_frame(arg_frame, var_name):
-                    arg_frame.append(Variable(var_name, '', 0))
-                    current_inst += 1
-                else:
-                    exit_error(-11)
-            else:
-                exit_error(-12)
-        elif inst[1] == 'MOVE':
-            if inst[2][0][1] == 'var':
-                arg_frame = frames_and_stacks[inst[2][0][2][:2]]
-                var_name = inst[2][0][2][3:]
-                variable = get_var_from_frame(arg_frame, var_name)
-                if not variable:
-                    exit_error(-9)
-                variable.init = True
-                variable.type_v = inst[2][1][1]
-                variable.value = inst[2][1][2]
-                current_inst += 1
-        elif inst[1] == 'CALL':
-            label_name = inst[2][0][2]
-            # storing current position in stack [name_of_current_instruction, incremented_inst_number]
-            frames_and_stacks['CF'].push_value(instruction_list[current_inst], [current_inst + 1])
-            if label_name not in label_dict:
-                exit_error(-13)
-            current_inst = label_dict[label_name]
-        elif inst[1] == 'RETURN':
-            if frames_and_stacks['CF'].is_empty():
-                exit_error(56)
-            jump_to = frames_and_stacks['CF'].pop_value()
-            current_inst = jump_to[1]
-        elif inst[1] == 'CREATEFRAME':
-            frames_and_stacks['TF'] = []
-            current_inst += 1
-        elif inst[1] == 'PUSHFRAME':
-            frames_and_stacks['FS'].push_value('TF', frames_and_stacks['TF'])
-            frames_and_stacks['LF'] = frames_and_stacks['TF']
-            # undefined temporary frame
-            frames_and_stacks['TF'] = []
-            current_inst += 1
-        elif inst[1] == 'POPFRAME':
-            if frames_and_stacks['LF'].is_empty():
-                exit_error(55)
-            frames_and_stacks['TF'] = frames_and_stacks['LF'].pop_value()[1]
-            current_inst += 1
-        elif inst[1] == 'PUSHS':
-            frames_and_stacks = push_symbol_to_data_stack(frames_and_stacks, inst[2][0])
-            current_inst += 1
-        elif inst[1] == 'POPS':
-            frames_and_stacks = pop_var_from_data_stack(frames_and_stacks, inst[2][0])
-            current_inst += 1
-        elif inst[1] == 'ADD':
-            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-            if symbol1[0] != 'int' or symbol2[0] != 'int':
-                exit_error(56)
-            set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] + symbol2[1])
-            current_inst += 1
-        elif inst[1] == 'SUB':
-            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-            if symbol1[0] != 'int' or symbol2[0] != 'int':
-                exit_error(56)
-            set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] - symbol2[1])
-            current_inst += 1
-
-        elif inst[1] == 'READ':
-            if args['input']:
-                with open(args['input'], 'r') as f:
-                    line = f.readline().strip('\n ')
-            else:
-                line = input().strip('\n ')
-
-            if not check_input_type(inst[2][1], line):
-                exit_error(-14)
-            if inst[2][1] == 'int':
-                line = int(line)
-            set_value_of_var(frames_and_stacks, inst[2][0], int(line))
-        elif inst[1] == 'WRITE':
-            symbol = get_value_from_symbol(frames_and_stacks, inst[2][0])
-            if symbol[0] == 'nil' and symbol[1] == 'nil':
-                print('', end='')
-            else:
-                print(symbol[1], end='')
-        elif inst[1] == 'MUL':
-            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-            if symbol1[0] != 'int' or symbol2[0] != 'int':
-                exit_error(56)
-            set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] * symbol2[1])
-            current_inst += 1
-        elif inst[1] == 'IDIV':
-            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-            if symbol1[0] != 'int' or symbol2[0] != 'int' or symbol2[1] == 0:
-                exit_error(56)
-            set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] // symbol2[1])
-            current_inst += 1
-        elif inst[1] == 'LG':
-            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-            if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
-                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] > symbol2[1])
-            else:
-                exit_error(53)
-            current_inst += 1
-        elif inst[1] == 'GT':
-            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-            if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
-                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] < symbol2[1])
-            else:
-                exit_error(53)
-            current_inst += 1
-        elif inst[1] == 'EQ':
-            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-            if (symbol1[0] == 'int' and symbol2[0] == 'int') or (symbol1[0] == 'string' and symbol2[0] == 'string'):
-                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] == symbol2[1])
-            elif symbol1[0] == 'nil' or symbol2[0] == 'nil':
-                set_value_of_var(frames_and_stacks, inst[2][0], symbol1[1] == symbol2[1])
-            else:
-                exit_error(53)
-            current_inst += 1
-        elif inst[1] == 'AND':
-            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-            if symbol1[0] == 'bool' and symbol2[0] == 'bool':
-                if symbol1[0] == 'true' and symbol2[0] == 'true':
-                    set_value_of_var(frames_and_stacks, inst[2][0], 'true')
-                else:
-                    set_value_of_var(frames_and_stacks, inst[2][0], 'false')
-            else:
-                exit_error(53)
-            current_inst += 1
-        elif inst[1] == 'OR':
-            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-            symbol2 = get_value_from_symbol(frames_and_stacks, inst[2][2])
-            if symbol1[0] == 'bool' and symbol2[0] == 'bool':
-                if symbol1[0] == 'true' or symbol2[0] == 'true':
-                    set_value_of_var(frames_and_stacks, inst[2][0], 'true')
-                else:
-                    set_value_of_var(frames_and_stacks, inst[2][0], 'false')
-            else:
-                exit_error(53)
-        elif inst[1] == 'NOT':
-            symbol1 = get_value_from_symbol(frames_and_stacks, inst[2][1])
-            if symbol1[0] == 'bool':
-                if symbol1[0] == 'true':
-                    set_value_of_var(frames_and_stacks, inst[2][0], 'false')
-                else:
-                    set_value_of_var(frames_and_stacks, inst[2][0], 'true')
-            else:
-                exit_error(53)
-        elif inst[1] == 'INT2CHAR':
-
-        elif inst[1] == 'STRI2INT':
-            pass
-
 
 if __name__ == '__main__':
-    args: dict = parse_arguments()
     xml_tree: eT.ElementTree = parse_source()
-    # format: [order, opcode, (arguments)[[order, type, value], ...], ...]
-    instruction_list: list = parse_element_tree()
-    print(instruction_list)
+
     execute()
