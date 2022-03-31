@@ -157,7 +157,7 @@ class Interpreter:
     def check_root(self):
         # check obligatory tag and attribute
         if self.xml_root.tag != 'program' or self.xml_root.attrib['language'] != 'IPPcode22':
-            exit_error(31)
+            exit_error(32)
 
     def parse_source(self):
         if self.source_is_file:
@@ -171,32 +171,32 @@ class Interpreter:
             self.xml_root = eT.ElementTree(eT.fromstringlist(lines)).getroot()
         except eT.ParseError:
             # TODO: errno?
-            exit_error(-5)
+            exit_error(31)
 
     def parse_element_tree(self):
         for element in self.xml_root:
-            if "order" not in element.attrib or "opcode" not in element.attrib:
-                # TODO: errno?
-                exit_error(31)
+            if element.tag != 'instruction' or 'order' not in element.attrib or 'opcode' not in element.attrib:
+                exit_error(32)
+
+            if not element.attrib['order'].isdigit():
+                exit_error(32)
 
             # checking if there is a recurrence of order numbers
             if int(element.attrib['order']) in self.order_numbers:
-                # TODO: errno?
-                exit_error(-6)
-
+                exit_error(32)
             self.order_numbers.append(int(element.attrib['order']))
-
             instruction = Instruction(element.attrib['opcode'], int(element.attrib['order']))
 
+            arg_counter = 1
             for argument in element.iter():
                 if argument != element:
-                    self.parse_argument(instruction, argument)
+                    self.parse_argument(instruction, argument, arg_counter)
+                    arg_counter += 1
             self.instructions.append(instruction)
 
-    def parse_argument(self, inst: Instruction, arg: eT.Element):
-        if arg.tag not in ('arg1', 'arg2', 'arg3'):
-            # TODO: errno?
-            exit_error(31)
+    def parse_argument(self, inst: Instruction, arg: eT.Element, arg_counter: int):
+        if arg.tag not in ('arg1', 'arg2', 'arg3') or int(arg.tag[3]) != arg_counter:
+            exit_error(32)
 
         if arg.attrib['type'] == 'var':
             # type var      <arg1 type="var">GF@var</arg1>
@@ -577,7 +577,8 @@ class Interpreter:
                     if value1 != value2:
                         self.inst_num = self.labels[label.value]
             else:
-                self.inst_num += 1
+                # unknown instruction
+                exit_error(32)
 
 
 interpret = Interpreter()
