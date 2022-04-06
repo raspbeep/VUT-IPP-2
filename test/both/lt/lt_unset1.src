@@ -1,0 +1,6 @@
+.IPPcode22
+
+DEFVAR GF@a
+DEFVAR GF@b
+
+LT GF@a int@40 GF@b

@@ -1,0 +1,5 @@
+.IPPcode22
+
+CREATEFRAME
+
+READ TF@a bool

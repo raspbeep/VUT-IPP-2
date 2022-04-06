@@ -55,6 +55,9 @@ class Stack:
     def is_empty(self):
         return not self.stack_len
 
+    def top(self):
+        return self.stack[-1]
+
 
 class Instruction:
     def __init__(self, inst_opcode, order):
@@ -64,35 +67,40 @@ class Instruction:
 
 
 class Argument:
-    def __init__(self, kind, value=None, name=None):
+    def __init__(self, kind, value=None, name=None, arg_order=None):
         # var | int | string | bool | label
         self.kind = kind
         self.value = value
         self.name = name
         self.frame = None
+        self.arg_order = arg_order
         self.assign_frame()
 
     def assign_frame(self):
         if self.name is not None and self.kind == 'var':
             self.frame = self.name[:2]
 
+    def get_pure_name(self):
+        if self.name is not None and self.kind == 'var':
+            return self.name[3:]
+
 
 class Variable:
     def __init__(self, name=None, type_v=None, initialized=False, value=None):
         self.type_v = type_v
+        self.pure_name = None
         self.name = name
         self.initialized = initialized
         self.value = value
 
+        self.assign_pure_name()
+
+    def assign_pure_name(self):
+        if self.name is not None:
+            self.pure_name = self.name[3:]
+
 
 class Interpreter:
-    group_var_symbol = ('MOVE', 'INT2CHAR', 'TYPE', 'STRLEN', 'NOT')
-    group_var_type = ['READ']
-    group_var_symbol_symbol = ('ADD', 'SUB', 'MUL', 'IDIV', 'LT', 'GT', 'EQ', 'AND', 'OR', 'STR2INT', 'CONCAT','GETCHAR', 'SETCHAR')
-    group_symbol = ('PUSHS', 'EXIT', 'DPRINT', 'WRITE')
-    group_var = ('POPS', 'DEFVAR')
-    group_no_args = ('BREAK', 'RETURN', 'CREATEFRAME', 'PUSHFRAME', 'POPFRAME')
-    group_label = ('LABEL', 'CALL', 'JUMP')
 
     label_list = []
     order_numbers = []
@@ -115,8 +123,8 @@ class Interpreter:
         self.call_stack = Stack()
         self.frame_stack = Stack()
 
-        self.local_frame = []
-        self.local_frame_valid = False
+        self.local_frame = Stack()
+        # self.local_frame_valid = False
 
         self.global_frame = []
 
@@ -185,21 +193,31 @@ class Interpreter:
                 exit_error(32)
 
             # checking if there is a recurrence of order numbers
-            if int(element.attrib['order']) in self.order_numbers:
+            if not self.check_int(element.attrib['order']):
+                exit_error(32)
+            if int(element.attrib['order']) in self.order_numbers or int(element.attrib['order']) < 1:
                 exit_error(32)
             self.order_numbers.append(int(element.attrib['order']))
             instruction = Instruction(element.attrib['opcode'], int(element.attrib['order']))
 
-            arg_counter = 1
             for argument in element.iter():
                 if argument != element:
-                    self.parse_argument(instruction, argument, arg_counter)
-                    arg_counter += 1
+                    self.parse_argument(instruction, argument)
+            instruction.args.sort(key=lambda x: x.arg_order)
+
+            counter = 1
+            for arg in instruction.args:
+                if arg.arg_order != counter:
+                    exit_error(32)
+                counter += 1
+
             self.instructions.append(instruction)
 
-    def parse_argument(self, inst: Instruction, arg: eT.Element, arg_counter: int):
-        if arg.tag not in ('arg1', 'arg2', 'arg3') or int(arg.tag[3]) != arg_counter:
+    def parse_argument(self, inst: Instruction, arg: eT.Element):
+        if arg.tag not in ('arg1', 'arg2', 'arg3'):
             exit_error(32)
+
+        arg_order = int(arg.tag[3])
 
         if arg.attrib['type'] == 'var':
             # type var      <arg1 type="var">GF@var</arg1>
@@ -207,35 +225,41 @@ class Interpreter:
             if len(arg.text) < 4 or arg.text[:3] not in ('GF@', 'LF@', 'TF@'):
                 # TODO: errno?
                 exit_error(31)
-            inst.args.append(Argument(kind='var', name=arg.text))
+            inst.args.append(Argument(kind='var', name=arg.text, arg_order=arg_order))
 
         elif arg.attrib['type'] == 'string':
             # type string   <arg1 type="string">hello world</arg1>
-            if not arg.text:
-                # TODO: errno?
-                exit_error(31)
-            inst.args.append(Argument(kind='string', value=arg.text))
+            # if not arg.text:
+            #     # TODO: errno?
+            #     exit_error(31)
+            for index, subst in enumerate(arg.text.split("\\")):
+                if index == 0:
+                    arg.text = subst
+                else:
+                    arg.text = arg.text + chr(int(subst[0:3])) + subst[3:]
+
+            inst.args.append(Argument(kind='string', value=arg.text, arg_order=arg_order))
 
         elif arg.attrib['type'] == 'int':
             # type int      <arg1 type="int">123</arg1>
             # check if empty and valid integer
             if not arg.text or not self.check_int(arg.text):
                 exit_error(32)
-            inst.args.append(Argument(kind='int', value=int(arg.text)))
+            inst.args.append(Argument(kind='int', value=int(arg.text), arg_order=arg_order))
 
         elif arg.attrib['type'] == 'bool':
             # type bool     <arg1 type="bool">true</arg1>
             if arg.text not in ('false', 'true'):
                 # TODO: errno?
                 exit_error(31)
-            inst.args.append(Argument(kind='bool', value=arg.text))
+            inst.args.append(Argument(kind='bool', value=arg.text, arg_order=arg_order))
 
         elif arg.attrib['type'] == 'nil':
             # type label    <arg1 type="nil">nil</arg1>
             if arg.text != "nil":
                 # TODO: errno?
                 exit_error(31)
-            inst.args.append(Argument(kind='nil', value='nil'))
+            inst.args.append(Argument(kind='nil', value='nil', arg_order=arg_order))
 
         elif arg.attrib['type'] == 'label':
             # type label    <arg1 type="label">label_name</arg1>
@@ -243,14 +267,14 @@ class Interpreter:
             if not arg.text:
                 # TODO: errno?
                 exit_error(31)
-            inst.args.append(Argument(kind='label', value=arg.text))
+            inst.args.append(Argument(kind='label', value=arg.text, arg_order=arg_order))
 
         elif arg.attrib['type'] == 'type':
             # type type    <arg1 type="type">type_name</arg1>
             if arg.text not in ('int', 'string', 'bool'):
                 # TODO: errno?
                 exit_error(31)
-            inst.args.append(Argument(kind=arg.text))
+            inst.args.append(Argument(kind=arg.text, arg_order=arg_order))
 
         # unknown argument type
         else:
@@ -258,12 +282,17 @@ class Interpreter:
             exit_error(32)
 
     def get_frame(self, arg: Argument):
-        if arg.frame == 'LF':
-            return self.local_frame
         if arg.frame == 'GF':
             return self.global_frame
         if arg.frame == 'TF':
+            if not self.temp_frame_valid:
+                exit_error(55)
             return self.temp_frame
+        if arg.frame == 'LF':
+            if self.local_frame.is_empty():
+                exit_error(55)
+                return
+            return self.local_frame.top()[1]
 
     def get_value_and_type_of_symbol(self, arg: Argument):
         if arg.kind == 'var':
@@ -276,7 +305,7 @@ class Interpreter:
     def get_var(self, arg):
         frame = self.get_frame(arg)
         for var in frame:
-            if var.name == arg.name:
+            if var.pure_name == arg.get_pure_name():
                 return var
         # TODO: errno? variable not found
         exit_error(-69)
@@ -284,7 +313,7 @@ class Interpreter:
     @staticmethod
     def print_help():
         print("""   Usage:
-            interpret.py [--help] [--input <input_file>] [--source <source_file>]
+            interpret.py [--help] [--input=<input_file>] [--source=<source_file>]
             some more helpful message
             """)
 
@@ -326,7 +355,7 @@ class Interpreter:
                 break
 
             curr_inst: Instruction = self.instructions[self.inst_num]
-            opcode = curr_inst.inst_opcode
+            opcode = curr_inst.inst_opcode.upper()
 
             if opcode == 'LABEL':
                 self.inst_num += 1
@@ -351,13 +380,21 @@ class Interpreter:
                     return
                 self.inst_num = self.call_stack.pop_value()[1]
             elif opcode == 'CREATEFRAME':
-                # TODO
+                self.temp_frame = []
+                self.temp_frame_valid = True
                 self.inst_num += 1
             elif opcode == 'PUSHFRAME':
-                # TODO
+                if not self.temp_frame_valid:
+                    exit_error(55)
+                self.local_frame.push_value('frame', self.temp_frame)
+                self.temp_frame_valid = False
                 self.inst_num += 1
             elif opcode == 'POPFRAME':
-                # TODO
+                if self.local_frame.is_empty():
+                    exit_error(55)
+                    return
+                self.temp_frame = self.local_frame.pop_value()[1]
+                self.temp_frame_valid = True
                 self.inst_num += 1
             elif opcode == 'PUSHS':
                 value, type_v = self.get_value_and_type_of_symbol(curr_inst.args[0])
@@ -549,16 +586,19 @@ class Interpreter:
                 var.type_v, var.value, var.initialized = 'string', new_var_val, True
                 self.inst_num += 1
             elif opcode == 'DPRINT':
-                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
-                print(value1)
+                value1, type_v1 = self.get_value_and_type_of_symbol(curr_inst.args[0])
+                if type_v1 == 'nil':
+                    print('', end='', file=sys.stderr)
+                else:
+                    print(value1, end='', file=sys.stderr)
                 self.inst_num += 1
             elif opcode == 'BREAK':
                 print('Printing some useful information about my current state.')
                 self.inst_num += 1
             elif opcode == 'JUMP':
                 label = curr_inst.args[0]
-                if not self.labels[label.value]:
-                    exit_error(69)
+                if label.value not in self.labels:
+                    exit_error(52)
                     return
                 self.inst_num = self.labels[label.value]
             elif opcode in ('JUMPIFEQ', 'JUMPIFNEQ'):

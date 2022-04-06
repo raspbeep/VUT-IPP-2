@@ -1,0 +1,2 @@
+.IPPcode22
+JUMPIFEQ nil@nil bool@true int@42

@@ -1,0 +1,6 @@
+.IPPcode22
+
+CREATEFRAME
+DEFVAR TF@a
+
+WRITE TF@a

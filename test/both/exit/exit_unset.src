@@ -1,0 +1,5 @@
+.IPPcode22
+
+DEFVAR GF@abc
+
+EXIT GF@abc

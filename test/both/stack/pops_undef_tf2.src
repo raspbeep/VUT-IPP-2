@@ -1,0 +1,6 @@
+.IPPcode22
+
+PUSHS string@ahoj
+
+POPS TF@undef
+

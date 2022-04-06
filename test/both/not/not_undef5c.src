@@ -1,0 +1,8 @@
+.IPPcode22
+
+CREATEFRAME
+PUSHFRAME
+
+DEFVAR GF@a
+
+NOT GF@a TF@undef

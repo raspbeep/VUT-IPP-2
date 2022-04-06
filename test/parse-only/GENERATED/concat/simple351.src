@@ -1,0 +1,2 @@
+.IPPcode22
+CONCAT string@a int@42 nil@nil

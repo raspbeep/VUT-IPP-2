@@ -1,0 +1,2 @@
+.IPPcode22
+JUMPIFEQ bool@true bool@true

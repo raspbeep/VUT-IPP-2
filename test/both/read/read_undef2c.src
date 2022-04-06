@@ -1,0 +1,6 @@
+.IPPcode22
+
+CREATEFRAME
+PUSHFRAME
+
+READ TF@a int
