@@ -336,7 +336,7 @@ function processInstruction(array $line_arr, int $order) {
 // check for header correctness
 function processHeader() {
     // file input for debugging
-    // global $myFile;
+    global $myFile;
     do {
         $line = trim(lineStripComment(trim(fgets(STDIN), " \n")));
     } while(lineIsEmpty($line));
@@ -420,7 +420,7 @@ function handleError(int $errno) {
 }
 
 // file input for debugging
-// $myFile = fopen("./test/string/escape1.src", "r");
+//$myFile = fopen("/Users/pavel/VUT-IPP-2/test/both/write/write_undef3b.src", "r");
 
 parseInputArguments();
 

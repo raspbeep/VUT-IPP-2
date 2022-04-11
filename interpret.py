@@ -32,8 +32,9 @@ err_nums = {
     52: "Undefined label, or redefinition.",
     53: "Invalid operands.",
     55: "Empty local frame stack before POPFRAME command.",
-    56: "Empty call stack before RETURN command.",
-    57: "Runtime error. Division by zero or invalid return value of EXIT."
+    56: "Empty call/data stack.",
+    57: "Runtime error. Division by zero or invalid return value of EXIT.",
+    58: "Invalid string operation(out of range)."
 }
 
 
@@ -57,6 +58,7 @@ class Stack:
 
     def pop_value(self):
         if self.stack_len != 0:
+            self.stack_len -= 1
             return self.stack.pop()
         else:
             exit_error(-2)
@@ -65,6 +67,8 @@ class Stack:
         return not self.stack_len
 
     def top(self):
+        if len(self.stack) == 1:
+            return self.stack[0]
         return self.stack[-1]
 
 
@@ -144,6 +148,9 @@ class Interpreter:
         self.source_is_file = False
         self.input_file = None
         self.input_is_file = False
+        self.input_file_is_opened = False
+        self.input_file_content = None
+        self.input_file_line_counter = 0
 
         # {label_name: index_of_instruction, ...}
         self.labels = {}
@@ -219,6 +226,28 @@ class Interpreter:
         except eT.ParseError:
             exit_error(31)
 
+    def get_input_line(self):
+        if self.input_is_file:
+            if not self.input_file_is_opened:
+
+                with open(self.input_file) as f:
+                    self.input_file_content = f.readlines()
+                    for i in range(len(self.input_file_content)):
+                        self.input_file_content[i] = self.input_file_content[i].strip()
+                    self.input_file_is_opened = True
+
+            if self.input_file_line_counter < len(self.input_file_content):
+                line = self.input_file_content[self.input_file_line_counter]
+                self.input_file_line_counter += 1
+                return line
+            else:
+                return None
+        else:
+            return input()
+
+
+
+
     def parse_element_tree(self):
         """Parses input XML input and saves its contents into classes Instruction or Argument"""
         for element in self.xml_root:
@@ -265,13 +294,16 @@ class Interpreter:
 
         elif arg.attrib['type'] == 'string':
             # type string   <arg1 type="string">hello world</arg1>
-            for index, subst in enumerate(arg.text.split("\\")):
-                if index == 0:
-                    arg.text = subst
-                else:
-                    if int(subst[0:3]) < 0 or int(subst[0:3]) > 999:
-                        exit_error(69)
-                    arg.text = arg.text + chr(int(subst[0:3])) + subst[3:]
+            if arg.text:
+                for index, subst in enumerate(arg.text.split("\\")):
+                    if index == 0:
+                        arg.text = subst
+                    else:
+                        if int(subst[0:3]) < 0 or int(subst[0:3]) > 999:
+                            exit_error(69)
+                        arg.text = arg.text + chr(int(subst[0:3])) + subst[3:]
+            else:
+                arg.text = ''
 
             inst.args.append(Argument(kind='string', value=arg.text, arg_order=arg_order))
 
@@ -340,8 +372,7 @@ class Interpreter:
         for var in frame:
             if var.pure_name == arg.get_pure_name():
                 return var
-        # TODO: errno? variable not found
-        exit_error(-69)
+        sys.exit(54)
 
     def check_if_file_exists(self, path: str):
         """Check for existence of file on given path. Used during parsing input arguments."""
@@ -411,6 +442,8 @@ class Interpreter:
             elif opcode == 'CALL':
                 label = curr_inst.args[0]
                 self.call_stack.push_value('int', self.inst_num + 1)
+                if label.value not in self.labels:
+                    exit_error(52)
                 self.inst_num = self.labels[label.value]
             elif opcode == 'RETURN':
                 if self.call_stack.is_empty():
@@ -442,6 +475,8 @@ class Interpreter:
                 self.inst_num += 1
             elif opcode == 'POPS':
                 var: Variable = self.get_var(curr_inst.args[0])
+                if self.data_stack.is_empty():
+                    exit_error(56)
                 var.type_v, var.value = self.data_stack.pop_value()
                 var.initialized = True
                 self.inst_num += 1
@@ -467,25 +502,27 @@ class Interpreter:
                         exit_error(57)
                     var.value = value1 // value2
                 self.inst_num += 1
-            elif opcode in ('LG', 'GT', 'EQ'):
+            elif opcode in ('LT', 'GT', 'EQ'):
                 var = self.get_var(curr_inst.args[0])
                 value1, type_v1, initialized1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
                 value2, type_v2, initialized2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
                 if not initialized1 or not initialized2:
                     exit_error(56)
-
-                if type_v1 != type_v2 or type_v1 not in ('int', 'string', 'bool', 'nil'):
-                    # TODO: errno?
-                    exit_error(69)
+                if type_v1 not in ('int', 'string', 'bool', 'nil') and type_v2 not in ('int', 'string', 'bool', 'nil'):
+                    exit_error(53)
                     return
-                var.type_v, var.initialized = bool, True
+                var.type_v, var.initialized = 'bool', True
 
                 if (type_v1 == 'nil' or type_v2 == 'nil') and opcode != 'EQ':
                     exit_error(53)
 
-                if opcode == 'LG':
+                if opcode == 'LT':
+                    if type_v1 != type_v2:
+                        exit_error(53)
                     var.value = 'true' if value1 < value2 else 'false'
                 elif opcode == 'GT':
+                    if type_v1 != type_v2:
+                        exit_error(53)
                     var.value = 'true' if value1 > value2 else 'false'
                 elif opcode == 'EQ':
                     var.value = 'true' if value1 == value2 else 'false'
@@ -493,20 +530,20 @@ class Interpreter:
             elif opcode == 'READ':
                 var: Variable = self.get_var(curr_inst.args[0])
                 value1, type_v1, initialized = self.get_value_and_type_of_symbol(curr_inst.args[1])
-                if self.input_file:
-                    with open(self.input_file, 'r') as f:
-                        line = f.readline().strip(' \n')
+
+                line = self.get_input_line()
+                if line is None:
+                    var.type_v, var.value, var.initialized = 'nil', 'nil', True
                 else:
-                    line = input()
-                if type_v1 == 'int':
-                    try:
-                        var.type_v, var.value, var.initialized = 'int', int(line), True
-                    except ValueError:
-                        var.type_v, var.value, var.initialized = 'nil', 'nil', True
-                elif type_v1 == 'bool':
-                    var.type_v, var.value, var.initialized = 'bool', 'true' if line == 'true' else 'false', True
-                elif type_v1 == 'string':
-                    var.type_v, var.value, var.initialized = 'string', line, True
+                    if type_v1 == 'int':
+                        try:
+                            var.type_v, var.value, var.initialized = 'int', int(line), True
+                        except ValueError:
+                            var.type_v, var.value, var.initialized = 'nil', 'nil', True
+                    elif type_v1 == 'bool':
+                        var.type_v, var.value, var.initialized = 'bool', 'true' if line.lower() == 'true' else 'false', True
+                    elif type_v1 == 'string':
+                        var.type_v, var.value, var.initialized = 'string', line, True
 
                 self.inst_num += 1
             elif opcode == 'WRITE':
@@ -524,10 +561,8 @@ class Interpreter:
                 value2, type_v2, initialized2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
                 if not initialized1 or not initialized2:
                     exit_error(56)
-
                 if type_v1 != type_v2 or type_v1 != 'bool':
-                    # TODO: errno?
-                    exit_error(69)
+                    exit_error(53)
                 var.type_v = 'bool'
                 var.initialized = True
                 var.value = 'true' if value1 == 'true' and value2 == 'true' else 'false'
@@ -540,8 +575,7 @@ class Interpreter:
                     exit_error(56)
 
                 if type_v1 != 'bool' or type_v2 != 'bool':
-                    # TODO: errno?
-                    exit_error(69)
+                    exit_error(53)
                 var.type_v = 'bool'
                 var.initialized = True
                 var.value = 'true' if value1 == 'true' or value2 == 'true' else 'false'
@@ -552,8 +586,7 @@ class Interpreter:
                 if not initialized:
                     exit_error(56)
                 if type_v != 'bool':
-                    # TODO: errno?
-                    exit_error(69)
+                    exit_error(53)
                 var.type_v = 'bool'
                 var.initialized = True
                 var.value = 'true' if value == 'false' else 'false'
@@ -564,8 +597,7 @@ class Interpreter:
                 if not initialized:
                     exit_error(56)
                 if type_v != 'int':
-                    # TODO: errno?
-                    exit_error(69)
+                    exit_error(53)
                 try:
                     char = chr(value)
                 except ValueError:
@@ -580,8 +612,7 @@ class Interpreter:
                 if not initialized1 or not initialized2:
                     exit_error(56)
                 if type_v1 != 'string' or type_v2 != 'int':
-                    # TODO: errno?
-                    exit_error(69)
+                    exit_error(53)
                 if value2 > len(value1) - 1:
                     exit_error(58)
                 try:
@@ -599,8 +630,7 @@ class Interpreter:
                 if not initialized1 or not initialized2:
                     exit_error(56)
                 if type_v1 != 'string' or type_v2 != 'string':
-                    # TODO: errno?
-                    exit_error(69)
+                    exit_error(53)
                     return
                 var.type_v, var.value, var.initialized = 'string', value1 + value2, True
                 self.inst_num += 1
@@ -610,8 +640,7 @@ class Interpreter:
                 if not initialized:
                     exit_error(56)
                 if type_v != 'string':
-                    # TODO: errno?
-                    exit_error(69)
+                    exit_error(53)
                     return
                 var.type_v, var.value, var.initialized = 'int', len(value), True
                 self.inst_num += 1
@@ -622,8 +651,7 @@ class Interpreter:
                 if not initialized1 or not initialized2:
                     exit_error(56)
                 if type_v1 != 'string' or type_v2 != 'int':
-                    # TODO: errno?
-                    exit_error(69)
+                    exit_error(53)
                     return
                 if value2 > len(value1) - 1:
                     exit_error(58)
@@ -633,11 +661,11 @@ class Interpreter:
                 var: Variable = self.get_var(curr_inst.args[0])
                 value1, type_v1, initialized1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
                 value2, type_v2, initialized2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
-                if not initialized1 or not initialized2:
+
+                if not initialized1 or not initialized2 or not var.initialized:
                     exit_error(56)
                 if var.type_v != 'string' or type_v1 != 'int' or type_v2 != 'string':
-                    # TODO: errno?
-                    exit_error(69)
+                    exit_error(53)
                     return
                 if value1 > len(var.value) - 1 or not value2:
                     exit_error(58)
@@ -656,6 +684,7 @@ class Interpreter:
                     print(value1, end='', file=sys.stderr)
                 self.inst_num += 1
             elif opcode == 'BREAK':
+                # TODO: print useful info
                 print('Printing some useful information about my current state.')
                 self.inst_num += 1
             elif opcode == 'JUMP':
@@ -666,33 +695,33 @@ class Interpreter:
                 self.inst_num = self.labels[label.value]
             elif opcode in ('JUMPIFEQ', 'JUMPIFNEQ'):
                 label = curr_inst.args[0]
-                value1, type_v1, initialized = self.get_value_and_type_of_symbol(curr_inst.args[1])
-                value2, type_v2, initialized = self.get_value_and_type_of_symbol(curr_inst.args[2])
-                if not initialized or not initialized:
+                value1, type_v1, initialized1 = self.get_value_and_type_of_symbol(curr_inst.args[1])
+                value2, type_v2, initialized2 = self.get_value_and_type_of_symbol(curr_inst.args[2])
+                if not initialized1 or not initialized2:
                     exit_error(56)
-                if not self.labels[label.value]:
-                    exit_error(69)
+                if label.value not in self.labels:
+                    exit_error(52)
                     return
-
-                if type_v1 == 'nil' or type_v2 == 'nil':
-                    self.inst_num = self.labels[label.value]
-                if type_v1 != type_v2:
+                if not (type_v1 == type_v2 or type_v1 == 'nil' or type_v2 == 'nil'):
                     exit_error(53)
-                if opcode == 'JUMPIFEQ':
-                    if value1 == value2:
-                        self.inst_num = self.labels[label.value]
-                    else:
-                        self.inst_num += 1
-                elif opcode == 'JUMPIFNEQ':
-                    if value1 != value2:
-                        self.inst_num = self.labels[label.value]
-                    else:
-                        self.inst_num += 1
+                else:
+                    if opcode == 'JUMPIFEQ':
+                        if value1 == value2:
+                            self.inst_num = self.labels[label.value]
+                        else:
+                            self.inst_num += 1
+                    elif opcode == 'JUMPIFNEQ':
+                        if value1 != value2:
+                            self.inst_num = self.labels[label.value]
+                        else:
+                            self.inst_num += 1
             elif opcode == 'EXIT':
                 value, type_v, initialized = self.get_value_and_type_of_symbol(curr_inst.args[0])
                 if not initialized:
                     exit_error(56)
-                if type_v != 'int' or value < 0 or value > 49:
+                if type_v != 'int':
+                    exit_error(53)
+                if value < 0 or value > 49:
                     exit_error(57)
                 else:
                     sys.exit(value)
@@ -709,6 +738,5 @@ class Interpreter:
             else:
                 # unknown instruction
                 exit_error(32)
-
 
 interpret = Interpreter()

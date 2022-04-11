@@ -5,7 +5,7 @@
 // @file interpret.py
 // @author xkrato61 Pavel Kratochvil
 //
-// @brief Interprets IPPcode22 from input XML structure
+// @brief Interprets IPPcode22 from input XML.
 //
 ////
 
@@ -255,10 +255,12 @@ class Tester {
                 if (!file_exists($testCase->pathToTest.".stdout_par.tmp")) {
                     continue;
                 }
-
-                $command = JAVA_JAR_ALIAS. " ".$this->args->jexamPath." ".$testCase->pathToTest.".out ".$testCase->pathToTest.".stdout_par.tmp";
-                exec($command, $output, $jexamCode);
-                $testCase->jexamCode = $jexamCode;
+                // use jexamxml only when --int-only is set, otherwise, there is nothing to compare to
+                if ($testCase->parserCode == 0 && $this->args->parseOnly) {
+                    $command = JAVA_JAR_ALIAS. " ".$this->args->jexamPath." ".$testCase->pathToTest.".out ".$testCase->pathToTest.".stdout_par.tmp";
+                    exec($command, $output, $jexamCode);
+                    $testCase->jexamCode = $jexamCode;
+                }
             }
         }
     }
@@ -268,7 +270,7 @@ class Tester {
             foreach ($this->testCases as $testCase) {
 
                 // do not test if not supposed to or previous parser test failed already
-                if ($this->args->parseOnly || $testCase->parserCode != 0) continue;
+                if ($this->args->parseOnly || $testCase->parserCode != 0 || $testCase->jexamCode != 0) continue;
 
                 if ($this->args->debug) {
                     printf( "*** Launching interpret test ***\nPath to test:   %s\nTest file name: %s\n\n",
@@ -284,7 +286,7 @@ class Tester {
 
                 $testCase->stdoutFileInt = $testCase->pathToTest.".stdout_int.tmp";
                 $testCase->stderrFileInt = $testCase->pathToTest.".stderr_int.tmp";
-                $dataRedirection = " > " . $testCase->stdoutFileInt . " 2> " . $testCase->stderrFileInt ;
+                $dataRedirection = " > " . $testCase->stdoutFileInt . " 2> " . $testCase->stderrFileInt;
                 $inputData = "";
                 if ($testCase->userInputFile) {
                     $inputData = " --input=".$testCase->pathToTest.".in ";
@@ -297,6 +299,13 @@ class Tester {
                 $output = NULL;
                 exec($command, $output, $interpretCode);
                 $testCase->interpretCode = $interpretCode;
+
+                if (file_get_contents($testCase->pathToTest.".stdout_int.tmp") ==
+                    file_get_contents($testCase->pathToTest.".out")) {
+                    $testCase->intOutputMatch = true;
+                } else {
+                    $testCase->intOutputMatch = false;
+                }
             }
         }
     }
@@ -409,25 +418,28 @@ class htmlPrinter
                                             Path to test file
                                         </th>
                                         <th>
-                                            Result
-                                        </th>
-                                         <th>
                                             Expected result code
                                         </th>
                                         <th>
-                                            Result code from parser
+                                            Final RC
                                         </th>
                                         <th>
-                                            Error message from parser
+                                            Final result
                                         </th>
                                         <th>
-                                            JEXAM
+                                            RC parser
                                         </th>
                                         <th>
-                                            Result code from interpret
+                                            JEXAM match
                                         </th>
                                         <th>
-                                            Error message from interpret
+                                            RC interpet
+                                        </th>
+                                        <th>
+                                            Interpret output match
+                                        </th>
+                                        <th>
+                                            Error message(interpet or parser)
                                         </th>
                                     </tr>";
     public string $templateEnd = "</div></table></body></html>";
@@ -439,43 +451,112 @@ class htmlPrinter
 
     public function __construct($testCases, $args) {
         $this->testCases = $testCases;
+        $this->args = $args;
         $this->addTests();
         $this->generateSummary();
         $this->generateHtmlFile();
-        $this->args = $args;
+
+    }
+
+    public function getMessageFromFile($path): string {
+        $resultString = "";
+        if (file_exists($path)) {
+            $resultString = trim(file_get_contents($path));
+        }
+        return $resultString;
     }
 
     public function addTests() {
         foreach ($this->testCases as $testCase) {
             $this->totalTestCount++;
+            $result_parser = "";
+            $result_int = "";
+            $result_int_out = "";
+            $result_final = "";
+            $result_code = 0;
+            $result_jexam = "";
+            $stderr_msg = "";
+
+            if ($this->args->parseOnly) {
+                if ($testCase->parserCode == $testCase->expectedCode) {
+                    $result_parser = $testCase->parserCode;
+                    $result_code = $testCase->parserCode;
+                    if ($testCase->jexamCode == 0) {
+                        $result_jexam = "OK";
+                        $result_final = "OK";
+                    } else {
+                        $result_jexam = "FAIL";
+                    }
+                } else {
+                    $stderr_msg = $this->getMessageFromFile($testCase->stderrFilePar);
+                }
+
+            }
 
             if ($this->args->interpretOnly) {
+                if ($testCase->interpretCode == $testCase->expectedCode) {
+                    $result_int = $testCase->interpretCode;
+                    $result_code = $testCase->interpretCode;
+                    if ($testCase->intOutputMatch) {
+                        $result_int_out = "OK";
+                        $result_final = "OK";
+                    } else {
+                        $result_int_out = "FAIL";
+                    }
+                } else {
+                    $stderr_msg = $this->getMessageFromFile($testCase->stderrFileInt);
+                }
+            }
 
-            } else if ($this->args->parseOnly) {
-
-            } else {
+            if ($this->args->testInterpret && $this->args->testParser) {
+                $result_parser = $testCase->parserCode;
+                if ($testCase->parserCode == 0) {
+                    if ($testCase->jexamCode == 0) {
+                        $result_jexam = "OK";
+                        $result_int = $testCase->interpretCode;
+                        if ($testCase->interpretCode == 0) {
+                            if ($testCase->intOutputMatch) {
+                                $result_final = "OK";
+                                $result_int_out = "OK";
+                            } else {
+                                $result_int_out = "FAIL";
+                                $result_code = -1;
+                                $stderr_msg = "Interpret output does not match";
+                            }
+                        } else {
+                            $result_code = $testCase->interpretCode;
+                            if ($testCase->interpretCode == $testCase->expectedCode) {
+                                $result_final = "OK";
+                            } else {
+                                $result_final = "FAIL";
+                                $stderr_msg = $this->getMessageFromFile($testCase->stderrFileInt);
+                            }
+                        }
+                    } else {
+                        $result_jexam = "FAIL";
+                        $result_final = "FAIL";
+                        $result_code = -1;
+                        $stderr_msg = "Parser output does not match";
+                    }
+                } else {
+                    $result_code = $testCase->parserCode;
+                    if ($testCase->parserCode == $testCase->expectedCode) {
+                        $result_final = "OK";
+                    } else {
+                        $result_final = "FAIL";
+                        $stderr_msg = $this->getMessageFromFile($testCase->stderrFilePar);
+                    }
+                }
 
             }
 
-
-//            if ($testCase->parserCode == 0 && $testCase->interpretCode == $testCase->expectedCode) {
-//                $success = "OK";
-//                $this->successTestCount ++;
-//            } else {
-//                if ($testCase->parserCode == $testCase->expectedCode && $testCase->jexamCode == 0) {
-//                    $success = "OK";
-//                    $this->successTestCount ++;
-//                } else {
-//                    $success = "FAIL";
-//                }
-//            }
-            if ($testCase->jexamCode == 0) {
-                $success_jexam = "OK";
-            } else if ($testCase->jexamCode == -255) {
-                $success_jexam = "not done";
+            if ($result_final == "OK") {
+                $this->successTestCount++;
+                $result_styling = " style=\"background-color:#04AA6D;\"";
             } else {
-                $success_jexam = "FAIL";
+                $result_styling = " style=\"background-color:#ff6961;\"";
             }
+
             $this->tests .= "<tr id=\"test-row\">
                                 <td>
                                     " . $testCase->testFileName . "
@@ -484,25 +565,28 @@ class htmlPrinter
                                     " . $testCase->pathToTest . "
                                 </td>
                                 <td>
-                                    " . $success . "
-                                </td>
-                                <td>
                                     " . $testCase->expectedCode . "
                                 </td>
                                 <td>
-                                    " . $testCase->parserCode . "
+                                    " . $result_code . "
+                                </td>
+                                <td".$result_styling.">
+                                    " . $result_final . "
                                 </td>
                                 <td>
-                                    " . $this->readOutputFile($testCase->stderrFilePar) . "
+                                    " . $result_parser . "
                                 </td>
                                 <td>
-                                    " . $success_jexam . "
+                                    " . $result_jexam . "
                                 </td>
                                 <td>
-                                    " . $testCase->interpretCode . "
+                                    " . $result_int . "
                                 </td>
                                 <td>
-                                    " . $this->readOutputFile($testCase->stderrFileInt) . "
+                                    " . $result_int_out . "
+                                </td>
+                                <td>
+                                    " . $stderr_msg . "
                                 </td>
                             </tr>";
         }
@@ -569,13 +653,14 @@ class Test {
     public string   $testFileName           = "";
     public string   $pathToTest             = "";
     public int      $parserCode             = 0;
-    public int      $jexamCode              = -255;
+    public int      $jexamCode              = 0;
     public int      $expectedCode           = 0;
     public int      $interpretCode          = 0;
     public string   $stderrFilePar          = "";
     public string   $stdoutFilePar          = "";
     public string   $stderrFileInt          = "";
     public string   $stdoutFileInt          = "";
+    public bool     $intOutputMatch         = false;
     public bool     $userInputFile          = false;
 }
 
