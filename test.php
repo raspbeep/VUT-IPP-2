@@ -1,9 +1,18 @@
 <?php
+////
+// Copyright 2022
+//
+// @file interpret.py
+// @author xkrato61 Pavel Kratochvil
+//
+// @brief Interprets IPPcode22 from input XML structure
+//
+////
 
 // directory error
 const ERROR_DIRECTORY = 41;
 // directory error parsing parameter --directory
-const ERROR_DIR_DIRECTORY = -3;
+const ERROR_DIR_DIRECTORY = 41;
 // jexampath path give in param --jexamscript does not exist
 const ERROR_JEXAMPATH = -4;
 // parse script path give in param --parse-script does not exist
@@ -11,15 +20,16 @@ const ERROR_PARSE_PATH = -5;
 // testing files' directory given in param --directory does not exist
 const ERROR_TEST_PATH = -6;
 
-// for local testing
+// TODO: change for submission
 const PHP_ALIAS = "php";
 const PYTHON_ALIAS = "python3";
+const JAVA_JAR_ALIAS = "java -jar";
 
 const ERROR_PARSER = -7;
 
 const ERROR_INTERPRET = -8;
 
-const ERROR_COLLIDING_PARAMS = -9;
+const ERROR_COLLIDING_PARAMS = 10;
 
 
 class InputArguments {
@@ -27,7 +37,7 @@ class InputArguments {
     public string $testDirectory = "./test/";
     public string $parseScriptPath = "./parse.php";
     public string $interpretScriptPath = "./interpret.py";
-    public string $jexamPath = "./jexamxml/jexamxml.jar";
+    public string $jexamPath = "/pub/courses/ipp/jexamxml/jexamxml.jar";
     // TODO: change to false
     public bool $recursion = true;
     public bool $parseOnly = false;
@@ -38,6 +48,7 @@ class InputArguments {
     public bool $cleanFiles = false;
     // TODO: check argument collisions
     // TODO: change to .src
+    // TODO: solve the fucking parser output shit
     // if --parse-only is set, reference output to compare parser xml output with is .out instead of .in
     public string $testingOutput = ".out";
 
@@ -77,7 +88,7 @@ class InputArguments {
 
         if (array_key_exists("directory", $givenParams)) {
             $directory = $givenParams["directory"];
-            if ($directory[strlen($directory) - 1] != "/") {
+            if (!str_ends_with($directory, "/")) {
                 handleError(ERROR_DIR_DIRECTORY);
             }
             if (!file_exists($directory)) {
@@ -119,11 +130,14 @@ class InputArguments {
         }
 
         if (array_key_exists("jexampath", $givenParams)) {
-            $jexamPath = $givenParams["jexampath"];
-            if (!file_exists($jexamPath)) {
+            $this->jexamPath = $givenParams["jexampath"];
+            if (!str_ends_with($this->jexamPath, "/")) {
+                $this->jexamPath .= "/";
+            }
+            $this->jexamPath .= "jexamxml.jar";
+            if (!file_exists($this->jexamPath)) {
                 handleError(ERROR_JEXAMPATH);
             }
-            $this->jexamPath = $givenParams["jexampath"];
         }
 
         if (array_key_exists("no-clean", $givenParams)) {
@@ -153,7 +167,7 @@ class Tester {
         $this->testParser();
         $this->testInterpret();
 
-        $this->htmlPrinter = new htmlPrinter($this->testCases);
+        $this->htmlPrinter = new htmlPrinter($this->testCases, $this->args);
         $this->tempFilesCleanUp();
     }
 
@@ -190,10 +204,7 @@ class Tester {
             $fileNoExt = preg_replace('/\\.[^.\\s]{2,4}$/', '', $fileName);
             $filePathNoExtName = $filePath . $fileNoExt;
 
-            // iterate only through .src files
-            //if (!$this->args->interpretOnly) {
-                if (!str_ends_with($fileName, ".src")) continue;
-            //}
+            if (!str_ends_with($fileName, ".src")) continue;
 
             $testCase = new Test();
             $testCase->pathToTest = $filePathNoExtName;
@@ -228,7 +239,6 @@ class Tester {
                         $testCase->pathToTest, $testCase->testFileName);
                 }
 
-                // with flag --int-only, input file for interpret is in .src
                 $inputFileSuffix = ".src";
                 $testCase->stdoutFilePar = $testCase->pathToTest.".stdout_par.tmp";
                 $testCase->stderrFilePar = $testCase->pathToTest.".stderr_par.tmp";
@@ -241,6 +251,14 @@ class Tester {
                 $output = NULL;
                 exec($command, $output, $parserCode);
                 $testCase->parserCode = $parserCode;
+
+                if (!file_exists($testCase->pathToTest.".stdout_par.tmp")) {
+                    continue;
+                }
+
+                $command = JAVA_JAR_ALIAS. " ".$this->args->jexamPath." ".$testCase->pathToTest.".out ".$testCase->pathToTest.".stdout_par.tmp";
+                exec($command, $output, $jexamCode);
+                $testCase->jexamCode = $jexamCode;
             }
         }
     }
@@ -261,7 +279,7 @@ class Tester {
                 if ($this->args->interpretOnly) {
                     $inputFileSuffix = ".src";
                 } else {
-                    $inputFileSuffix = ".stderr_par.tmp";
+                    $inputFileSuffix = ".stdout_par.tmp";
                 }
 
                 $testCase->stdoutFileInt = $testCase->pathToTest.".stdout_int.tmp";
@@ -393,11 +411,17 @@ class htmlPrinter
                                         <th>
                                             Result
                                         </th>
+                                         <th>
+                                            Expected result code
+                                        </th>
                                         <th>
                                             Result code from parser
                                         </th>
                                         <th>
                                             Error message from parser
+                                        </th>
+                                        <th>
+                                            JEXAM
                                         </th>
                                         <th>
                                             Result code from interpret
@@ -411,27 +435,46 @@ class htmlPrinter
     public string $testsSummary = "";
     public int $totalTestCount = 0;
     public int $successTestCount = 0;
+    public InputArguments $args;
 
-    public function __construct($testCases) {
+    public function __construct($testCases, $args) {
         $this->testCases = $testCases;
         $this->addTests();
         $this->generateSummary();
         $this->generateHtmlFile();
+        $this->args = $args;
     }
 
     public function addTests() {
         foreach ($this->testCases as $testCase) {
             $this->totalTestCount++;
-            if ($testCase->parserCode == 0 && $testCase->interpretCode == $testCase->expectedCode) {
-                $success = "OK";
-                $this->successTestCount ++;
+
+            if ($this->args->interpretOnly) {
+
+            } else if ($this->args->parseOnly) {
+
             } else {
-                if ($testCase->parserCode == $testCase->expectedCode) {
-                    $success = "OK";
-                    $this->successTestCount ++;
-                } else {
-                    $success = "FAIL";
-                }
+
+            }
+
+
+//            if ($testCase->parserCode == 0 && $testCase->interpretCode == $testCase->expectedCode) {
+//                $success = "OK";
+//                $this->successTestCount ++;
+//            } else {
+//                if ($testCase->parserCode == $testCase->expectedCode && $testCase->jexamCode == 0) {
+//                    $success = "OK";
+//                    $this->successTestCount ++;
+//                } else {
+//                    $success = "FAIL";
+//                }
+//            }
+            if ($testCase->jexamCode == 0) {
+                $success_jexam = "OK";
+            } else if ($testCase->jexamCode == -255) {
+                $success_jexam = "not done";
+            } else {
+                $success_jexam = "FAIL";
             }
             $this->tests .= "<tr id=\"test-row\">
                                 <td>
@@ -444,10 +487,16 @@ class htmlPrinter
                                     " . $success . "
                                 </td>
                                 <td>
+                                    " . $testCase->expectedCode . "
+                                </td>
+                                <td>
                                     " . $testCase->parserCode . "
                                 </td>
                                 <td>
                                     " . $this->readOutputFile($testCase->stderrFilePar) . "
+                                </td>
+                                <td>
+                                    " . $success_jexam . "
                                 </td>
                                 <td>
                                     " . $testCase->interpretCode . "
@@ -460,7 +509,6 @@ class htmlPrinter
     }
 
     public function generateSummary() {
-        // TODO: svg graph?
         $this->testsSummary .= "<table id=\"summary\">
                                     <tr id=\"table-header\">
                                         <th>
@@ -488,7 +536,7 @@ class htmlPrinter
                                         </td>
                                         <td>
                                             <b>
-                                            ".($this->successTestCount/$this->totalTestCount)*100 ."%
+                                            ".intval(($this->successTestCount/$this->totalTestCount)*100) ."%
                                             </b> 
                                         </td>
                                     </tr>
@@ -521,6 +569,7 @@ class Test {
     public string   $testFileName           = "";
     public string   $pathToTest             = "";
     public int      $parserCode             = 0;
+    public int      $jexamCode              = -255;
     public int      $expectedCode           = 0;
     public int      $interpretCode          = 0;
     public string   $stderrFilePar          = "";
@@ -546,7 +595,7 @@ function handleError(int $errno) {
             exit(ERROR_DIRECTORY);
         case ERROR_COLLIDING_PARAMS:
             fputs(STDERR, "Invalid or colliding input arguments.\n");
-            exit(69);
+            exit(ERROR_COLLIDING_PARAMS);
     }
 }
 
