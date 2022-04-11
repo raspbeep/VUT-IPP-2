@@ -1,6 +1,0 @@
-.IPPcode22
-
-CREATEFRAME
-PUSHFRAME
-
-STRLEN LF@a string@abc

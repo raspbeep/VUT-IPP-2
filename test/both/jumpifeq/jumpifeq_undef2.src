@@ -1,5 +1,0 @@
-.IPPcode22
-
-LABEL aaa
-
-JUMPIFEQ aaa GF@undefined int@2

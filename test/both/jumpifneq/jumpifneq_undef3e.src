@@ -1,8 +1,0 @@
-.IPPcode22
-
-CREATEFRAME
-PUSHFRAME
-
-LABEL aaa
-
-JUMPIFNEQ aaa int@40 LF@undefined

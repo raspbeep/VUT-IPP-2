@@ -1,7 +1,0 @@
-.IPPcode22
-
-CREATEFRAME
-
-DEFVAR GF@a
-
-TYPE GF@a TF@undef

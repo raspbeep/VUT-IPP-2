@@ -146,15 +146,15 @@ class Tester {
 
     public function __construct() {
         $this->args = new InputArguments();
-        $this->htmlPrinter = new htmlPrinter();
+
 
         $this->testCases = array();
         $this->findTests();
         $this->testParser();
         $this->testInterpret();
-        $this->tempFilesCleanUp();
 
-        $this->htmlPrinter->generateHtmlFile();
+        $this->htmlPrinter = new htmlPrinter($this->testCases);
+        $this->tempFilesCleanUp();
     }
 
     public function tempFilesCleanUp() {
@@ -204,6 +204,11 @@ class Tester {
             if (file_exists($testCase->pathToTest . ".rc")) {
                 $testCase->expectedCode = intval(trim(file_get_contents($testCase->pathToTest.".rc")));
             }
+            if (file_exists($testCase->pathToTest . ".in")) {
+                if (file_get_contents($testCase->pathToTest . ".in") != "") {
+                    $testCase->userInputFile = true;
+                }
+            }
             $this->testCases[] = $testCase;
 
 
@@ -224,16 +229,17 @@ class Tester {
                 }
 
                 // with flag --int-only, input file for interpret is in .src
-                $fileSuffix = ".src";
+                $inputFileSuffix = ".src";
                 $testCase->stdoutFilePar = $testCase->pathToTest.".stdout_par.tmp";
                 $testCase->stderrFilePar = $testCase->pathToTest.".stderr_par.tmp";
+
                 $dataRedirection = " > " . $testCase->stdoutFilePar . " 2> " . $testCase->stderrFilePar;
 
-                $command = PHP_ALIAS." ".$this->args->parseScriptPath." < ".$testCase->pathToTest.".src > ".$testCase->pathToTest.".pout";
+                $command = PHP_ALIAS." ".$this->args->parseScriptPath." < ".$testCase->pathToTest.$inputFileSuffix.$dataRedirection;
 
                 // $interpretOutput = stdout, $interpretCode = exit code of interpret
-                exec($command, $parserOutput, $parserCode);
-                $testCase->parserMessage = $parserOutput;
+                $output = NULL;
+                exec($command, $output, $parserCode);
                 $testCase->parserCode = $parserCode;
             }
         }
@@ -243,6 +249,9 @@ class Tester {
         if ($this->args->testInterpret) {
             foreach ($this->testCases as $testCase) {
 
+                // do not test if not supposed to or previous parser test failed already
+                if ($this->args->parseOnly || $testCase->parserCode != 0) continue;
+
                 if ($this->args->debug) {
                     printf( "*** Launching interpret test ***\nPath to test:   %s\nTest file name: %s\n\n",
                         $testCase->pathToTest, $testCase->testFileName);
@@ -250,21 +259,25 @@ class Tester {
 
                 // with flag --int-only, input file for interpret is in .src
                 if ($this->args->interpretOnly) {
-                    $fileSuffix = ".src";
+                    $inputFileSuffix = ".src";
                 } else {
-                    $fileSuffix = ".stderr_par.tmp";
+                    $inputFileSuffix = ".stderr_par.tmp";
                 }
 
                 $testCase->stdoutFileInt = $testCase->pathToTest.".stdout_int.tmp";
                 $testCase->stderrFileInt = $testCase->pathToTest.".stderr_int.tmp";
                 $dataRedirection = " > " . $testCase->stdoutFileInt . " 2> " . $testCase->stderrFileInt ;
+                $inputData = "";
+                if ($testCase->userInputFile) {
+                    $inputData = " --input=".$testCase->pathToTest.".in ";
+                }
 
                 $command = PYTHON_ALIAS." ".$this->args->interpretScriptPath." --source=".
-                    $testCase->pathToTest.$fileSuffix.$dataRedirection;
+                    $testCase->pathToTest.$inputFileSuffix.$dataRedirection. $inputData;
 
                 // $interpretOutput = stdout, $interpretCode = exit code of interpret
-                exec($command, $interpretOutput, $interpretCode);
-                $testCase->interpretMessage = $interpretOutput;
+                $output = NULL;
+                exec($command, $output, $interpretCode);
                 $testCase->interpretCode = $interpretCode;
             }
         }
@@ -297,79 +310,103 @@ class htmlPrinter
                                                 IPP Test Report
                                             </title>
                                             <style>
-                                                .test-result-table {
-                                                    border: 1px solid black;
-                                                    width: auto;
+                                                div {
+                                                    margin: auto;
                                                 }
-                                                .test-result-table-header-cell {
-                                                    border-bottom: 1px solid black;
-                                                    background-color: silver;
+                                                table {
+                                                    display: table;
+                                                    border-collapse: separate;
+                                                    box-sizing: border-box;
+                                                    text-indent: initial;
+                                                    border-spacing: 2px;
+                                                    border-color: grey;
                                                 }
-                                                .test-result-step-command-cell {
-                                                    border-bottom: 1px solid gray;
+                                                th {
+                                                    display: table-cell;                                                    
+                                                    vertical-align: inherit;
+                                                    font-weight: bold;
+                                                    text-align: -internal-center;
                                                 }
-                                                .test-result-step-description-cell {
-                                                    border-bottom: 1px solid gray;
+                                                tr {
+                                                    display: table-row;
+                                                    vertical-align: inherit;
+                                                    border-color: inherit;
                                                 }
-                                                .test-result-step-result-cell-ok {
-                                        
-                                                    border-bottom: 1px solid gray;
-                                                    background-color: green;
+                                                #results td, #results th {
+                                                    border: 1px solid #ddd;
+                                                    padding: 5px;
                                                 }
-                                                .test-result-step-result-cell-failure {
-                                                    border-bottom: 1px solid gray;
-                                                    background-color: red;
+                                                #results td {
+                                                    text-align: center; 
                                                 }
-                                                .test-result-step-result-cell-notperformed {
-                                                    border-bottom: 1px solid gray;
-                                                    background-color: white;
+                                                #results {
+                                                    font-family: Arial, Helvetica, sans-serif;
+                                                    border-collapse: collapse;
+                                                    width: 100%;
                                                 }
-                                                .test-result-describe-cell {
-                                                    background-color: tan;
-                                                    font-style: italic;
+                                                #table-header {
+                                                    background-color: #04AA6D;
                                                 }
-                                                .test-cast-status-box-ok {
-                                                    border: 1px solid black;
-                                                    float: left;
-                                                    margin-right: 10px;
-                                                    width: 45px;
-                                                    height: 25px;
-                                                    background-color: green;
+                                                
+                                                
+                                                #test-row:{background-color: #ddd;}
+                                                #test-row:nth-child(even){background-color: #f2f2f2;}
+                                                #test-row:hover {background-color: #ddd;}
+                                                
+                                                #summary td, #summary th {
+                                                    border: 1px solid #ddd;
+                                                    padding: 8px;
                                                 }
+                                                #summary th {
+                                                    padding: 15px;
+                                                }
+                                                #summary td {
+                                                    text-align: center; 
+                                                }
+                                                #summary {
+                                                    font-family: Arial, Helvetica, sans-serif;
+                                                    border-collapse: collapse;
+                                                    margin: 0 auto;
+                                                    margin-bottom: 20px;
+                                                }
+                                                #test-header {
+                                                    background-color: #04AA6D;
+                                                }
+                                                
+                                                #summary-row tr{background-color: #f2f2f2;}
+                                                #summary-row:{background-color: #ddd;}
                                             </style>
                                         </head>
                                         <body>
+                                        <div>
                                         <h1 class=\"test-results-header\">
                                             Test Report
                                         </h1>";
-    public string $tableBegin = "<table class=\"test-result-table\">
-                                    <thead>
-                                    <tr>
-                                        <td class=\"test-result-table-header-cell\">
+    public string $tableBegin = "<table id=\"results\">
+                                    <tr id=\"table-header\">
+                                        <th>
                                             Test File Name
-                                        </td>
-                                        <td class=\"test-result-table-header-cell\">
+                                        </th>
+                                        <th>
                                             Path to test file
-                                        </td>
-                                        <td class=\"test-result-table-header-cell\">
+                                        </th>
+                                        <th>
                                             Result
-                                        </td>
-                                        <td class=\"test-result-table-header-cell\">
+                                        </th>
+                                        <th>
                                             Result code from parser
-                                        </td>
-                                        <td class=\"test-result-table-header-cell\">
+                                        </th>
+                                        <th>
                                             Error message from parser
-                                        </td>
-                                        <td class=\"test-result-table-header-cell\">
+                                        </th>
+                                        <th>
                                             Result code from interpret
-                                        </td>
-                                        <td class=\"test-result-table-header-cell\">
+                                        </th>
+                                        <th>
                                             Error message from interpret
-                                        </td>
-                                    </tr>
-                                    </thead>
-                                    <tbody>";
-    public string $templateEnd = "</tbody></table></body></html>";
+                                        </th>
+                                    </tr>";
+    public string $templateEnd = "</div></table></body></html>";
     public string $tests = "";
     public string $testsSummary = "";
     public int $totalTestCount = 0;
@@ -377,34 +414,46 @@ class htmlPrinter
 
     public function __construct($testCases) {
         $this->testCases = $testCases;
-
+        $this->addTests();
+        $this->generateSummary();
+        $this->generateHtmlFile();
     }
 
-    public function addTest() {
+    public function addTests() {
         foreach ($this->testCases as $testCase) {
-
             $this->totalTestCount++;
-            $this->tests .= "<tr class=\"test-result-step-row test-result-step-row-altone\">
-                                <td class=\"test-result-step-command-cell\">
+            if ($testCase->parserCode == 0 && $testCase->interpretCode == $testCase->expectedCode) {
+                $success = "OK";
+                $this->successTestCount ++;
+            } else {
+                if ($testCase->parserCode == $testCase->expectedCode) {
+                    $success = "OK";
+                    $this->successTestCount ++;
+                } else {
+                    $success = "FAIL";
+                }
+            }
+            $this->tests .= "<tr id=\"test-row\">
+                                <td>
                                     " . $testCase->testFileName . "
                                 </td>
-                                <td class=\"test-result-step-description-cell\">
-                                    " . $test->pathToTest . "
+                                <td>
+                                    " . $testCase->pathToTest . "
                                 </td>
-                                <td class=\"" . (($test->parserCode == $test->expectedCode) ? "test-result-step-result-cell-ok" : "test-result-step-result-cell-failure") . "\">
-                                    " . (($test->parserCode == $test->expectedCode) ? "OK" : "ERR") . "
+                                <td>
+                                    " . $success . "
                                 </td>
-                                <td class=\"" . (($test->parserCode == $test->expectedCode) ? "test-result-step-result-cell-ok" : "test-result-step-result-cell-failure") . "\">
-                                    " . $test->parserCode . "
+                                <td>
+                                    " . $testCase->parserCode . "
                                 </td>
-                                <td class=\"test-result-step-result-cell-ok\">
-                                    " . (implode('', $test->parserMessage)) . "
+                                <td>
+                                    " . $this->readOutputFile($testCase->stderrFilePar) . "
                                 </td>
-                                <td class=\"test-result-step-result-cell-ok\">
-                                    " . $test->interpretCode . "
+                                <td>
+                                    " . $testCase->interpretCode . "
                                 </td>
-                                <td class=\"test-result-step-result-cell-ok\">
-                                    " . (implode('', $test->interpretMessage)) . "
+                                <td>
+                                    " . $this->readOutputFile($testCase->stderrFileInt) . "
                                 </td>
                             </tr>";
         }
@@ -412,39 +461,37 @@ class htmlPrinter
 
     public function generateSummary() {
         // TODO: svg graph?
-        $this->testsSummary .= "<table class=\"test-result-table\">
-                                    <thead>
-                                    <tr>
-                                        <td class=\"test-result-table-header-cell\">
+        $this->testsSummary .= "<table id=\"summary\">
+                                    <tr id=\"table-header\">
+                                        <th>
                                             Total number of tests
-                                        </td>
-                                        <td class=\"test-result-table-header-cell\">
+                                        </th>
+                                        <th>
                                             Successful tests
-                                        </td>
-                                        <td class=\"test-result-table-header-cell\">
+                                        </th>
+                                        <th>
                                             Failed tests
-                                        </td>
-                                        <td class=\"test-result-table-header-cell\">
+                                        </th>
+                                        <th>
                                             Percentage successful
-                                        </td>
+                                        </th>
                                     </tr>
-                                    </thead>
-                                    <tbody>
-                                    <tr class=\"test-result-step-row test-result-step-row-altone\">
-                                        <td class=\"test-result-step-command-cell\">
+                                    <tr>
+                                        <td>
                                             ".$this->totalTestCount."
                                         </td>
-                                        <td class=\"test-result-step-description-cell\">
+                                        <td>
                                             ".$this->successTestCount."
                                         </td>
-                                        <td class=\"test-result-step-result-cell-ok\">
+                                        <td>
                                             ".$this->totalTestCount-$this->successTestCount."
                                         </td>
-                                        <td class=\"test-result-step-result-cell-ok\">
-                                            ".$this->successTestCount/$this->totalTestCount."
+                                        <td>
+                                            <b>
+                                            ".($this->successTestCount/$this->totalTestCount)*100 ."%
+                                            </b> 
                                         </td>
                                     </tr>
-                                    </tbody>
                                 </table>";
     }
 
@@ -454,20 +501,33 @@ class htmlPrinter
         fwrite($outputHtmlFile, $htmlContent);
         fclose($outputHtmlFile);
     }
+
+    public function readOutputFile(string $filename): string
+    {
+        $output = "";
+        if (file_exists($filename)) {
+            $contents = file_get_contents($filename);
+            $lines = explode("\n", $contents);
+
+            foreach ($lines as $line) {
+                $output .= $line . '<br>';
+            }
+        }
+        return $output;
+    }
 }
 
 class Test {
-    public string   $testFileName       = "";
-    public string   $pathToTest         = "";
-    public int      $parserCode;
-    public int      $expectedCode;
-    public array    $parserMessage      = array();
-    public int      $interpretCode      = 0;
-    public array    $interpretMessage   = array();
-    public string   $stderrFilePar         = "";
-    public string   $stdoutFilePar         = "";
-    public string   $stderrFileInt         = "";
-    public string   $stdoutFileInt         = "";
+    public string   $testFileName           = "";
+    public string   $pathToTest             = "";
+    public int      $parserCode             = 0;
+    public int      $expectedCode           = 0;
+    public int      $interpretCode          = 0;
+    public string   $stderrFilePar          = "";
+    public string   $stdoutFilePar          = "";
+    public string   $stderrFileInt          = "";
+    public string   $stdoutFileInt          = "";
+    public bool     $userInputFile          = false;
 }
 
 function handleError(int $errno) {

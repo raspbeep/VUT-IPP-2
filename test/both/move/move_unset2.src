@@ -1,8 +1,0 @@
-.IPPcode22
-
-DEFVAR GF@a
-
-CREATEFRAME
-DEFVAR TF@b
-
-MOVE GF@a TF@b

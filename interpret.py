@@ -181,7 +181,6 @@ class Interpreter:
         try:
             self.xml_root = eT.ElementTree(eT.fromstringlist(lines)).getroot()
         except eT.ParseError:
-            # TODO: errno?
             exit_error(31)
 
     def parse_element_tree(self):
@@ -236,6 +235,8 @@ class Interpreter:
                 if index == 0:
                     arg.text = subst
                 else:
+                    if int(subst[0:3]) < 0 or int(subst[0:3]) > 999:
+                        exit_error(69)
                     arg.text = arg.text + chr(int(subst[0:3])) + subst[3:]
 
             inst.args.append(Argument(kind='string', value=arg.text, arg_order=arg_order))

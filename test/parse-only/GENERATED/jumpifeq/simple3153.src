@@ -1,2 +1,0 @@
-.IPPcode22
-JUMPIFEQ label string@a nil@nil

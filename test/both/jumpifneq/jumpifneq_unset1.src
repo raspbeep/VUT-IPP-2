@@ -1,7 +1,0 @@
-.IPPcode22
-
-DEFVAR GF@b
-
-LABEL aaa
-
-JUMPIFNEQ aaa int@40 GF@b
