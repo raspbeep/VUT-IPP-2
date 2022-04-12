@@ -412,6 +412,9 @@ class htmlPrinter
     public string $tableBegin = "<table id=\"results\">
                                     <tr id=\"table-header\">
                                         <th>
+                                            No.
+                                        </th>
+                                        <th>
                                             Test File Name
                                         </th>
                                         <th>
@@ -467,6 +470,7 @@ class htmlPrinter
     }
 
     public function addTests() {
+        $counter = 1;
         foreach ($this->testCases as $testCase) {
             $this->totalTestCount++;
             $result_parser = "";
@@ -559,6 +563,9 @@ class htmlPrinter
 
             $this->tests .= "<tr id=\"test-row\">
                                 <td>
+                                    " . $counter . "
+                                </td>
+                                <td>
                                     " . $testCase->testFileName . "
                                 </td>
                                 <td>
@@ -589,6 +596,7 @@ class htmlPrinter
                                     " . $stderr_msg . "
                                 </td>
                             </tr>";
+            $counter++;
         }
     }
 
