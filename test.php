@@ -21,8 +21,8 @@ const ERROR_PARSE_PATH = -5;
 const ERROR_TEST_PATH = -6;
 
 // TODO: change for submission
-const PHP_ALIAS = "php";
-const PYTHON_ALIAS = "python3";
+const PHP_ALIAS = "php8.1";
+const PYTHON_ALIAS = "python3.8";
 const JAVA_JAR_ALIAS = "java -jar";
 
 const ERROR_PARSER = -7;
@@ -637,9 +637,15 @@ class htmlPrinter
 
     public function generateHtmlFile() {
         $htmlContent = $this->templateBegin.$this->testsSummary.$this->tableBegin.$this->tests.$this->templateEnd;
-        $outputHtmlFile = fopen("testResult.html", "w");
-        fwrite($outputHtmlFile, $htmlContent);
-        fclose($outputHtmlFile);
+
+        // output to external .html file for testing purposes
+        if ($this->args->debug) {
+            $outputHtmlFile = fopen("testResult.html", "w");
+            fwrite($outputHtmlFile, $htmlContent);
+            fclose($outputHtmlFile);
+        } else {
+            printf("%s", $htmlContent);
+        }
     }
 
     public function readOutputFile(string $filename): string
