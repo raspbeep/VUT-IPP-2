@@ -1,7 +1,7 @@
 all: clean
 
 pack:
-	zip xkrato61.zip interpret.py parse.php test.php readme2.md
+	zip xkrato61.zip interpret.py parse.php test.php readme2.pdf
 
 clean:
 	rm -f xkrato61.zip

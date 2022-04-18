@@ -17,6 +17,7 @@ err_nums = {
     32: "Unexpected XML structure.",
     52: "Undefined label, or redefinition.",
     53: "Invalid operands.",
+    54: "Non-existing variable",
     55: "Empty local frame stack before POPFRAME command.",
     56: "Empty call/data stack.",
     57: "Runtime error. Division by zero or invalid return value of EXIT.",
@@ -164,10 +165,7 @@ class Interpreter:
 
     @staticmethod
     def print_help():
-        print("""   Usage:
-                interpret.py [--help] [--input=<input_file>] [--source=<source_file>]
-                some more helpful message
-                """)
+        print("Usage: interpret.py [--help] {[--input=<input_file>] [--source=<source_file>]}")
 
     @staticmethod
     def check_int_in_str(string: str):
@@ -289,7 +287,7 @@ class Interpreter:
                         arg.text = subst
                     else:
                         if int(subst[0:3]) < 0 or int(subst[0:3]) > 999:
-                            exit_error(69)
+                            exit_error(53)
                         arg.text = arg.text + chr(int(subst[0:3])) + subst[3:]
             else:
                 arg.text = ''
@@ -361,7 +359,7 @@ class Interpreter:
         for var in frame:
             if var.pure_name == arg.get_pure_name():
                 return var
-        sys.exit(54)
+        exit_error(54)
 
     def check_if_file_exists(self, path: str):
         """Check for existence and privileges of a file on given path. Used during parsing input arguments."""
@@ -604,8 +602,7 @@ class Interpreter:
                 try:
                     new_value = ord(value1[value2])
                 except ValueError:
-                    # TODO: errno?
-                    exit_error(69)
+                    exit_error(53)
                     return
                 var.type_v, var.value, var.initialized = 'int', new_value, True
                 self.inst_num += 1
@@ -670,8 +667,7 @@ class Interpreter:
                     print(value1, end='', file=sys.stderr)
                 self.inst_num += 1
             elif opcode == 'BREAK':
-                # TODO: print useful info
-                print('Printing some useful information about my current state.')
+                print(f'Instruction number: {self.inst_num}')
                 self.inst_num += 1
             elif opcode == 'JUMP':
                 label = curr_inst.args[0]
