@@ -13,20 +13,6 @@ import sys
 import argparse
 
 err_nums = {
-    -1: "Failure exit.",
-    -2: "Stack error.",
-    -3: "No input arguments. Nothing to interpret :)",
-    -4: "Invalid input params.",
-    -5: "Invalid source file.",
-    -6: "Recurring order number.",
-    -7: "Recurring label name.",
-    -8: "Recurring variable in global frame.",
-    -9: "Variable in was not found in frame.",
-    -10: "Incompatible variable MOVE types.",
-    -11: "Invalid variable name.",
-    -12: "Defvar, but no var was given.",
-    -13: "Jump to non-existent label name.",
-    -14: "Invalid input type and value.",
     31: "Invalid XML format.",
     32: "Unexpected XML structure.",
     52: "Undefined label, or redefinition.",
@@ -37,11 +23,10 @@ err_nums = {
     58: "Invalid string operation(out of range)."
 }
 
-
 def exit_error(err_number):
+    """Prints error message from err_nums dict to stderr and exits with given code"""
     print(err_nums[err_number], file=sys.stderr)
     sys.exit(err_number)
-
 
 class Stack:
     """Stack class
@@ -61,7 +46,7 @@ class Stack:
             self.stack_len -= 1
             return self.stack.pop()
         else:
-            exit_error(-2)
+            exit_error(55)
 
     def is_empty(self):
         return not self.stack_len
@@ -160,8 +145,6 @@ class Interpreter:
         # stack of call frames, basically just a stack of program counter integers
         self.call_stack = Stack()
         self.local_frame = Stack()
-        # TODO: necessary?
-        # self.local_frame_valid = False
 
         self.global_frame = []
 
@@ -214,13 +197,22 @@ class Interpreter:
 
     def parse_source(self):
         """Reads source file from a given path or from user input"""
+        lines = []
         if self.source_is_file:
             with open(self.source_file, 'r') as f:
-                lines = f.readlines()
+                read_lines = f.readlines()
+            for i in range(len(read_lines)):
+                if read_lines[i] != '':
+                    lines.append(read_lines[i].strip())
         else:
-            lines = []
-            while (line := input()) != '':
-                lines.append(line)
+            while True:
+                try :
+                    line = input()
+                    line = line.strip()
+                    if line != '':
+                        lines.append(line)
+                except EOFError:
+                    break;
         try:
             self.xml_root = eT.ElementTree(eT.fromstringlist(lines)).getroot()
         except eT.ParseError:
@@ -244,9 +236,6 @@ class Interpreter:
                 return None
         else:
             return input()
-
-
-
 
     def parse_element_tree(self):
         """Parses input XML input and saves its contents into classes Instruction or Argument"""
@@ -375,16 +364,12 @@ class Interpreter:
         sys.exit(54)
 
     def check_if_file_exists(self, path: str):
-        """Check for existence of file on given path. Used during parsing input arguments."""
-        should_exit = False
+        """Check for existence and privileges of a file on given path. Used during parsing input arguments."""
         try:
-            f = open(path)
+            with open(path, 'r') as f:
+                pass
         except IOError:
-            should_exit = True
-        finally:
-            f.close()
-            if should_exit:
-                sys.exit(11)
+            sys.exit(11)
 
     def parse_input_arguments(self):
         """Parses input arguments and saves the result into interpret attributes for later use"""
@@ -400,9 +385,10 @@ class Interpreter:
             self.print_help()
             sys.exit(0)
         elif arguments['help'] and (arguments['input_file'] or arguments['source_file']):
-            exit_error(-4)
+            sys.exit(10)
+        # neither --input nor --source was set
         elif not (arguments['input_file'] or arguments['source_file']):
-            exit_error(-3)
+            sys.exit(10)
 
         if arguments['input_file']:
             self.input_is_file = True

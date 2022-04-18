@@ -9,56 +9,46 @@
 //
 ////
 
+//// Error codes ////
 // directory error
 const ERROR_DIRECTORY = 41;
 // directory error parsing parameter --directory
 const ERROR_DIR_DIRECTORY = 41;
-// jexampath path give in param --jexamscript does not exist
+// jexampath path give in param --jexampath does not exist
 const ERROR_JEXAMPATH = -4;
 // parse script path give in param --parse-script does not exist
 const ERROR_PARSE_PATH = -5;
 // testing files' directory given in param --directory does not exist
 const ERROR_TEST_PATH = -6;
+// invalid or colliding input arguments
+const ERROR_PARAMS = 10;
 
-// TODO: change for submission
-const PHP_ALIAS = "php8.1";
-const PYTHON_ALIAS = "python3.8";
+const PHP_ALIAS = "php";
+const PYTHON_ALIAS = "python";
 const JAVA_JAR_ALIAS = "java -jar";
 
-const ERROR_PARSER = -7;
-
-const ERROR_INTERPRET = -8;
-
-const ERROR_COLLIDING_PARAMS = 10;
-
-
+// A singleton class for parsing and validating user input arguments
+// used for storing and future retrieval during testing
 class InputArguments {
-
-    public string $testDirectory = "./test/";
+    public string $testDirectory = "./";
     public string $parseScriptPath = "./parse.php";
     public string $interpretScriptPath = "./interpret.py";
     public string $jexamPath = "/pub/courses/ipp/jexamxml/jexamxml.jar";
-    // TODO: change to false
-    public bool $recursion = true;
+    public bool $recursion = false;
     public bool $parseOnly = false;
     public bool $interpretOnly = false;
     public bool $testInterpret = true;
     public bool $testParser = true;
-
-    public bool $cleanFiles = false;
-    // TODO: check argument collisions
-    // TODO: change to .src
-    // TODO: solve the fucking parser output shit
-    // if --parse-only is set, reference output to compare parser xml output with is .out instead of .in
-    public string $testingOutput = ".out";
-
+    public bool $cleanFiles = true;
     public bool $debug = false;
 
     public function __construct() {
+        $possibleBeginsWith = array("--directory=", "--parse-script=", "--int-script=", "--jexampath=");
+        $possibleOptions = array("--help", "--recursive", "--parse-only", "--int-only", "--no-clean", "--debug");
         $argOptions = array("help", "directory:", "recursive", "parse-script:", "int-script:", "parse-only", "int-only", "jexampath:", "no-clean", "debug");
         $givenParams = getopt("", $argOptions);
 
-        global $argc;
+        global $argc, $argv;
 
         if (array_key_exists("help", $givenParams)) {
             if ($argc == 2) {
@@ -82,7 +72,7 @@ class InputArguments {
 
                 exit(0);
             } else {
-                handleError(ERROR_PARAM);
+                handleError(ERROR_PARAMS);
             }
         }
 
@@ -94,7 +84,6 @@ class InputArguments {
             if (!file_exists($directory)) {
                 handleError(ERROR_TEST_PATH);
             }
-
             $this->testDirectory = $givenParams["directory"];
         }
 
@@ -113,7 +102,7 @@ class InputArguments {
         if (array_key_exists("int-only", $givenParams)) {
             if (array_key_exists("parse-only", $givenParams) || array_key_exists("parse-script", $givenParams)
                 || array_key_exists("jexampath", $givenParams)) {
-                handleError(ERROR_COLLIDING_PARAMS);
+                handleError(ERROR_PARAMS);
             }
             $this->testParser = false;
             $this->interpretOnly = true;
@@ -121,12 +110,10 @@ class InputArguments {
 
         if (array_key_exists("parse-only", $givenParams)) {
             if (array_key_exists("int-only", $givenParams) || array_key_exists("int-script", $givenParams)) {
-                handleError(ERROR_COLLIDING_PARAMS);
+                handleError(ERROR_PARAMS);
             }
             $this->testInterpret = false;
             $this->parseOnly = true;
-            // TODO wtf is this
-            $this->testingOutput = ".out";
         }
 
         if (array_key_exists("jexampath", $givenParams)) {
@@ -148,11 +135,28 @@ class InputArguments {
             $this->debug = true;
         }
 
-        // TODO check if any unknown parameters are present
-        return 0;
+        // check for unknown or missing parameters
+        for ($i = 1; $i < $argc; $i++) {
+            $passed = false;
+            // input argument must either completely match one of $possibleOptions
+            if (in_array($argv[$i], $possibleOptions)) {
+                $passed = true;
+            }
+            // or must begin with one of $possibleBeginsWith, for instance "--int-script="
+            foreach ($possibleBeginsWith as $p) {
+                if (str_starts_with($argv[$i], $p)) {
+                    // if it completely matches, no further required information apart from the flag was given
+                    if ($argv[$i] == $p) handleError(ERROR_PARAMS);
+                    $passed = true;
+                    break;
+                }
+            }
+            if (!$passed) handleError(ERROR_PARAMS);
+        }
     }
 }
 
+// A singleton class for finding tests, parser testing, interpret testing
 class Tester {
     private InputArguments $args;
     public htmlPrinter $htmlPrinter;
@@ -160,13 +164,10 @@ class Tester {
 
     public function __construct() {
         $this->args = new InputArguments();
-
-
         $this->testCases = array();
         $this->findTests();
         $this->testParser();
         $this->testInterpret();
-
         $this->htmlPrinter = new htmlPrinter($this->testCases, $this->args);
         $this->tempFilesCleanUp();
     }
@@ -174,62 +175,101 @@ class Tester {
     public function tempFilesCleanUp() {
         if ($this->args->cleanFiles) {
             foreach ($this->testCases as $testCase) {
-                if (!file_exists($testCase->pathToTest . ".stdout_par.tmp")) {
+                if (file_exists($testCase->pathToTest . ".stdout_par.tmp")) {
                     unlink($testCase->pathToTest . ".stdout_par.tmp");
                 }
-                if (!file_exists($testCase->pathToTest . ".stderr_par.tmp")) {
+                if (file_exists($testCase->pathToTest . ".stderr_par.tmp")) {
                     unlink($testCase->pathToTest . ".stderr_par.tmp");
                 }
-                if (!file_exists($testCase->pathToTest . ".stdout_int.tmp")) {
+                if (file_exists($testCase->pathToTest . ".stdout_int.tmp")) {
                     unlink($testCase->pathToTest . ".stdout_int.tmp");
                 }
-                if (!file_exists($testCase->pathToTest . "..stderr_int.tmp")) {
+                if (file_exists($testCase->pathToTest . ".stderr_int.tmp")) {
                     unlink($testCase->pathToTest . ".stderr_int.tmp");
                 }
             }
         }
     }
 
+    // finds all tests in default or given directory
     public function findTests() {
-        // Construct the iterator
-        $it = new RecursiveDirectoryIterator($this->args->testDirectory);
+        if ($this->args->recursion) {
+            // Construct the iterator
+            $it = new RecursiveDirectoryIterator($this->args->testDirectory);
 
-        // Loop through files
-        foreach (new RecursiveIteratorIterator($it) as $file) {
-            $fileName = $file->getFilename();
-            // skip current and parent directory to avoid looping
-            if ($fileName == "." || $fileName == "..") continue;
+            // Loop through files
+            foreach (new RecursiveIteratorIterator($it) as $file) {
+                $fileName = $file->getFilename();
+                // skip current and parent directory to avoid looping
+                if ($fileName == "." || $fileName == "..") continue;
 
-            $filePath = $file->getPath() . "/";
-            $fileNoExt = preg_replace('/\\.[^.\\s]{2,4}$/', '', $fileName);
-            $filePathNoExtName = $filePath . $fileNoExt;
+                $filePath = $file->getPath() . "/";
+                $fileNoExt = preg_replace('/\\.[^.\\s]{2,4}$/', '', $fileName);
+                $filePathNoExtName = $filePath . $fileNoExt;
 
-            if (!str_ends_with($fileName, ".src")) continue;
+                if (!str_ends_with($fileName, ".src")) continue;
 
-            $testCase = new Test();
-            $testCase->pathToTest = $filePathNoExtName;
-            $testCase->testFileName = $fileNoExt;
+                $testCase = new Test();
+                $testCase->pathToTest = $filePathNoExtName;
+                $testCase->testFileName = $fileNoExt;
 
-            $this->addMissingFiles($testCase);
+                $this->addMissingFiles($testCase);
 
-            if (file_exists($testCase->pathToTest . ".rc")) {
-                $testCase->expectedCode = intval(trim(file_get_contents($testCase->pathToTest.".rc")));
-            }
-            if (file_exists($testCase->pathToTest . ".in")) {
-                if (file_get_contents($testCase->pathToTest . ".in") != "") {
-                    $testCase->userInputFile = true;
+                if (file_exists($testCase->pathToTest . ".rc")) {
+                    $testCase->expectedCode = intval(trim(file_get_contents($testCase->pathToTest.".rc")));
+                }
+                if (file_exists($testCase->pathToTest . ".in")) {
+                    if (file_get_contents($testCase->pathToTest . ".in") != "") {
+                        $testCase->userInputFile = true;
+                    }
+                }
+                $this->testCases[] = $testCase;
+
+                if ($this->args->debug) {
+                    printf( "*** Adding new testcase ***\nPath to test:   %s\nTest file name: %s\n\n",
+                        $testCase->pathToTest, $testCase->testFileName);
                 }
             }
-            $this->testCases[] = $testCase;
+        } else {
+            $files = scandir($this->args->testDirectory);
+            foreach($files as $file) {
+                // skip current and parent directory to avoid looping
+                if ($file == "." || $file == "..") continue;
 
+                $filePath = $this->args->testDirectory;
 
-            if ($this->args->debug) {
-                printf( "*** Adding new testcase ***\nPath to test:   %s\nTest file name: %s\n\n",
-                    $testCase->pathToTest, $testCase->testFileName);
+                $fileNoExt = preg_replace('/\\.[^.\\s]{2,4}$/', '', $file);
+                $filePathNoExtName = $filePath . $fileNoExt;
+                if (is_dir($filePathNoExtName)) continue;
+
+                if (!str_ends_with($file, ".src")) continue;
+
+                $testCase = new Test();
+                $testCase->pathToTest = $filePathNoExtName;
+                $testCase->testFileName = $fileNoExt;
+
+                $this->addMissingFiles($testCase);
+
+                if (file_exists($testCase->pathToTest . ".rc")) {
+                    $testCase->expectedCode = intval(trim(file_get_contents($testCase->pathToTest.".rc")));
+                }
+                if (file_exists($testCase->pathToTest . ".in")) {
+                    if (file_get_contents($testCase->pathToTest . ".in") != "") {
+                        $testCase->userInputFile = true;
+                    }
+                }
+                $this->testCases[] = $testCase;
+
+                if ($this->args->debug) {
+                    printf( "*** Adding new testcase ***\nPath to test:   %s\nTest file name: %s\n\n",
+                        $testCase->pathToTest, $testCase->testFileName);
+                }
             }
         }
+
     }
 
+    // launches parser tests on all found testcases
     public function testParser() {
         if ($this->args->testParser) {
             foreach ($this->testCases as $testCase) {
@@ -265,6 +305,7 @@ class Tester {
         }
     }
 
+    // launches interpret tests on all found testcases
     public function testInterpret() {
         if ($this->args->testInterpret) {
             foreach ($this->testCases as $testCase) {
@@ -300,8 +341,11 @@ class Tester {
                 exec($command, $output, $interpretCode);
                 $testCase->interpretCode = $interpretCode;
 
-                if (file_get_contents($testCase->pathToTest.".stdout_int.tmp") ==
-                    file_get_contents($testCase->pathToTest.".out")) {
+
+                // compare interpret outputs using diff
+                $command = "diff ".$testCase->pathToTest.".stdout_int.tmp ".$testCase->pathToTest.".out";
+                exec($command, $output, $diffCode);
+                if ($diffCode == 0) {
                     $testCase->intOutputMatch = true;
                 } else {
                     $testCase->intOutputMatch = false;
@@ -309,7 +353,6 @@ class Tester {
             }
         }
     }
-
 
     // add missing .in, .out, .rc if absent
     public function addMissingFiles(Test $testCase) {
@@ -601,6 +644,10 @@ class htmlPrinter
     }
 
     public function generateSummary() {
+        $percentageSuccessful = 0;
+        if ($this->totalTestCount != 0) {
+            $percentageSuccessful = intval(($this->successTestCount/$this->totalTestCount)*100);
+        }
         $this->testsSummary .= "<table id=\"summary\">
                                     <tr id=\"table-header\">
                                         <th>
@@ -628,7 +675,7 @@ class htmlPrinter
                                         </td>
                                         <td>
                                             <b>
-                                            ".intval(($this->successTestCount/$this->totalTestCount)*100) ."%
+                                            ". $percentageSuccessful ."%
                                             </b> 
                                         </td>
                                     </tr>
@@ -692,9 +739,9 @@ function handleError(int $errno) {
         case ERROR_PARSE_PATH:
             fputs(STDERR, "Invalid directory given in parameter --jexampath.\n");
             exit(ERROR_DIRECTORY);
-        case ERROR_COLLIDING_PARAMS:
-            fputs(STDERR, "Invalid or colliding input arguments.\n");
-            exit(ERROR_COLLIDING_PARAMS);
+        case ERROR_PARAMS:
+            fputs(STDERR, "Unknown, invalid or colliding input arguments.\n");
+            exit(ERROR_PARAMS);
     }
 }
 
